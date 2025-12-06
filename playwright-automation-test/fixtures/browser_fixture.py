@@ -1,5 +1,4 @@
 import os
-import shutil
 import pytest
 import logging
 from playwright.sync_api import sync_playwright
