@@ -1,0 +1,10 @@
+playwright
+pytest
+pytest-xdist
+pytest-rerunfailures
+pytest-playwright
+allure-pytest
+loguru
+pyyaml
+rich
+requests
