@@ -7,17 +7,40 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session")
-def browser():
+def browser(config):
     """
+    :param config: 配置对象 fixture - 来自 conftest.py
     启动并提供一个浏览器实例，测试结束后关闭浏览器。
-    作用域为 session，整个测试会话中只启动一次浏览器
+    默认浏览器为chrome , 默认headless 模式
+    通过configs/env.xxx.yaml 文件配置浏览器类型和参数
+    例如：
+    browser: "chromium"  # 可选 "chromium", "firefox", "webkit"
+    headless: true
+    slowmo: 50
     """
-    logger.info("start test")
+    logger.info("start test session: launching browser")
+
     playwright = sync_playwright().start()
-    browser = playwright.chromium.launch(headless=True)
+
+    browser_type = config.get("browser", "chromium")
+    headless = config.get("headless", True)
+    slowmo = config.get("slowmo", 0)
+
+    launch_kwargs = {
+        "headless": headless,
+        "slow_mo": slowmo
+    }
+
+    logger.info(f"launch browser={browser_type}, headless={headless}, slowmo={slowmo}")
+
+    # 根据 browser_type 动态选择浏览器
+    browser = getattr(playwright, browser_type).launch(**launch_kwargs)
+
     yield browser
+
     logger.info("close the browser")
     browser.close()
+    playwright.stop()
 
 
 @pytest.fixture
