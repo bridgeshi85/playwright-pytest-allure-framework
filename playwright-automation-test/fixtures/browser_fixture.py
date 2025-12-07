@@ -1,15 +1,17 @@
-import os
 import pytest
 import logging
 from playwright.sync_api import sync_playwright
-from datetime import datetime
-from pathlib import Path
+from fixtures.report_fixture import save_screenshot
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session")
 def browser():
+    """
+    启动并提供一个浏览器实例，测试结束后关闭浏览器。
+    作用域为 session，整个测试会话中只启动一次浏览器
+    """
     logger.info("start test")
     playwright = sync_playwright().start()
     browser = playwright.chromium.launch(headless=True)
@@ -18,42 +20,27 @@ def browser():
     browser.close()
 
 
-# 定义一个 fixture 来创建和清理测试目录
-@pytest.fixture
-def test_directory(request):
-    logger.info("create result folder")
-    # 确保基础测试结果目录存在
-    test_results_dir = Path('test_results')
-    test_results_dir.mkdir(parents=True, exist_ok=True)
-
-    # 获取当前日期
-    date_str = datetime.now().strftime('%Y-%m-%d')
-    # 根据时间创建唯一的测试序号
-    test_count = sum(1 for _ in os.scandir(test_results_dir) if _.is_dir()) + 1
-    test_dir_name = f"{date_str}-{test_count}"
-    test_dir = test_results_dir / test_dir_name
-    test_dir.mkdir(parents=True, exist_ok=True)  # 创建目录
-
-    yield test_dir
-
-
 @pytest.fixture
 def page(browser, test_directory, request):
-    # page fixture 创建一个新的浏览器页面
-    # 会先调用browser和test_directory fixture
-    # 失败时截图保存在test_directory中
-
+    """
+    创建一个新的浏览器页面。
+    - 依赖 browser 和 test_directory fixture。
+    - 测试失败时自动截图并保存到 test_directory。
+    :param browser: 浏览器对象 fixture
+    :param test_directory: 测试结果目录 - 来自于 report_fixture.py
+    :param request: pytest 请求对象
+    """
     page = browser.new_page()
 
-    # Capture screenshot if the test fails
     def capture_final_screenshot():
-        if request.node.rep_call.failed:
+        # 检查测试是否失败，若失败则截图
+        if hasattr(request.node, "rep_call") and request.node.rep_call.failed:
             logger.info("test failed")
-            screenshot_path = test_directory / "final-screenshot.png"
-            page.screenshot(path=str(screenshot_path))
-            logger.info(f"Test failed, final screenshot saved at {screenshot_path}")
+            save_screenshot(page, test_directory, logger)
+        # 关闭页面
         page.close()
 
+    # 测试结束后自动执行截图和关闭页面
     request.addfinalizer(capture_final_screenshot)
     yield page
 
