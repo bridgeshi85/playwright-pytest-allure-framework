@@ -36,20 +36,10 @@ def page(browser, test_directory, request):
         # 检查测试是否失败，若失败则截图
         if hasattr(request.node, "rep_call") and request.node.rep_call.failed:
             logger.info("test failed")
-            save_screenshot(page, test_directory, logger)
-        # 关闭页面
+            save_screenshot(page, test_directory, filename="failed-screenshot.png")
         page.close()
 
     # 测试结束后自动执行截图和关闭页面
     request.addfinalizer(capture_final_screenshot)
+
     yield page
-
-
-# ========== Pytest hook：用于判断测试是否失败 ==========
-@pytest.hookimpl(hookwrapper=True, tryfirst=True)
-def pytest_runtest_makereport(item, call):
-    """在测试结束后，将执行结果写入 item 对象，供 fixture 使用。"""
-    outcome = yield
-    rep = outcome.get_result()
-
-    setattr(item, f"rep_{rep.when}", rep)
