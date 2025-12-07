@@ -5,3 +5,6 @@ env/
 venv/
 .env
 .DS_Store
+test_results
+logs/
+*.log
