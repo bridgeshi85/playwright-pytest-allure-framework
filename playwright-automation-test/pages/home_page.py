@@ -9,4 +9,4 @@ class HomePage:
 
     def should_show_welcome_text(self):
         logger.info("Checking welcome text")
-        return self.page.get_by_test_id("welcome-text1").is_visible()
+        return self.page.get_by_test_id("welcome-text").is_visible()
