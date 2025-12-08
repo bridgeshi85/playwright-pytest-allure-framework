@@ -1,0 +1,18 @@
+version: '3.9'
+
+services:
+  jenkins:
+    build:
+      context: ./jenkins
+      dockerfile: Dockerfile
+    container_name: my-jenkins
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock  # 挂载本机的docker, 不适用于windows
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock # 指示容器使用该socket
+volumes:
+  jenkins_home:
