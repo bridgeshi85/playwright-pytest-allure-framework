@@ -1,9 +1,37 @@
 import pytest
 import logging
+
+from playwright.async_api import ViewportSize
 from playwright.sync_api import sync_playwright
 from fixtures.report_fixture import save_screenshot
 
 logger = logging.getLogger(__name__)
+
+
+def create_context(browser, test_directory, locale="en-US"):
+    """
+    Create a new browser context with specified configurations.
+
+    :param browser: The Playwright browser instance used to create a new context.
+    :type browser: playwright.async_api.Browser
+    :param test_directory: The base directory where test-related files, including videos, will be stored.
+    :type test_directory: pathlib.Path
+    :param locale: The locale to use in the context (e.g., 'en-US'). Defaults to 'en-US'.
+    :type locale: str
+
+    :returns: A new browser context configured with the provided settings.
+    :rtype: playwright.async_api.BrowserContext
+    """
+    video_dir = test_directory / "videos"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    context = browser.new_context(
+        ignore_https_errors=True,
+        accept_downloads=True,
+        record_video_dir=str(video_dir),
+        viewport=ViewportSize(width=1920, height=1080),
+        locale=locale,
+    )
+    return context
 
 
 @pytest.fixture(scope="session")
@@ -37,7 +65,6 @@ def browser(config):
     browser = getattr(playwright, browser_type).launch(**launch_kwargs)
 
     yield browser
-
     logger.info("close the browser")
     browser.close()
     playwright.stop()
@@ -49,20 +76,23 @@ def page(browser, test_directory, request):
     创建一个新的浏览器页面。
     - 依赖 browser 和 test_directory fixture。
     - 测试失败时自动截图并保存到 test_directory。
+    - 测试结束后自动保存视频。
     :param browser: 浏览器对象 fixture
     :param test_directory: 测试结果目录 - 来自于 report_fixture.py
     :param request: pytest 请求对象
     """
-    page = browser.new_page()
-
-    def capture_final_screenshot():
-        # 检查测试是否失败，若失败则截图
-        if hasattr(request.node, "rep_call") and request.node.rep_call.failed:
-            logger.info("test failed")
-            save_screenshot(page, test_directory, filename="failed-screenshot.png")
-        page.close()
-
-    # 测试结束后自动执行截图和关闭页面
-    request.addfinalizer(capture_final_screenshot)
+    # page = browser.new_page()
+    context = create_context(browser, test_directory)
+    page = context.new_page()
 
     yield page
+    rep = getattr(request.node, "rep_call", None)
+    logger.info("end test case: saving video and closing page")
+
+    # 1️⃣ 测试失败时截图并保存
+    if rep and rep.failed:
+        save_screenshot(page, test_directory)
+
+    # 2️⃣ 关闭页面和上下文
+    logger.info("close the page")
+    page.close()
