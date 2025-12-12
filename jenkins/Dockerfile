@@ -2,10 +2,6 @@ FROM jenkins/jenkins:lts
 
 USER root
 
-# -------- Install Jenkins plugins (as root) --------
-COPY plugins.txt /usr/share/jenkins/plugins.txt
-RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/plugins.txt
-
 # -------- Install Docker CLI --------
 RUN apt-get update && \
     apt-get install -y \
@@ -21,10 +17,14 @@ RUN apt-get update && \
     apt-get install -y docker-ce-cli docker-compose-plugin && \
     rm -rf /var/lib/apt/lists/*
 
+# add jenkins to docker group
+RUN groupadd docker || true && usermod -aG docker jenkins
 
 # Switch back to jenkins user
 USER jenkins
 
-EXPOSE 8080
+# -------- Install Jenkins plugins (as root) --------
+COPY plugins.txt /usr/share/jenkins/plugins.txt
+RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/plugins.txt
 
-ENTRYPOINT ["jenkins.sh"]
+EXPOSE 8080

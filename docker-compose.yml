@@ -5,6 +5,7 @@ services:
     build:
       context: ./jenkins
       dockerfile: Dockerfile
+    user: root # 以root用户运行，确保有权限访问docker.sock
     container_name: my-jenkins
     ports:
       - "8080:8080"
@@ -14,5 +15,14 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # 挂载本机的docker, 不适用于windows
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock # 指示容器使用该socket
+
+  demo-frontend:
+    build:
+      context: ./demo-frontend
+      dockerfile: Dockerfile
+    container_name: demo-frontend
+    ports:
+      - "3000:80"          # 宿主机访问（可选）
+    restart: unless-stopped
 volumes:
   jenkins_home:
