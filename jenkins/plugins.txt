@@ -1,0 +1,15 @@
+git:latest
+docker-workflow:latest
+blueocean:latest
+pipeline-utility-steps:latest
+credentials-binding:latest
+email-ext:latest
+allure-jenkins-plugin:latest
+workflow-aggregator:latest
+junit:latest
+htmlpublisher:latest
+ssh-agent:latest
+timestamper:latest
+build-timeout:latest
+ws-cleanup:latest
+ansicolor:latest
