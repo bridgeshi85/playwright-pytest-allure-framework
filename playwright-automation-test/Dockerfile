@@ -27,7 +27,7 @@ COPY requirements.txt .
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 # 安装 Playwright 浏览器及依赖
-RUN playwright install --with-deps chromium firefox webkit
+RUN playwright install --with-deps chromium
 
 # 创建 Allure 报告目录
 RUN mkdir -p /workspace/allure-results /workspace/allure-report
