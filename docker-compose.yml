@@ -15,6 +15,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # 挂载本机的docker, 不适用于windows
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock # 指示容器使用该socket
+    networks:
+      - e2e-test
 
   demo-frontend:
     build:
@@ -24,5 +26,12 @@ services:
     ports:
       - "3000:80"          # 宿主机访问（可选）
     restart: unless-stopped
+    networks:
+      - e2e-test
+  
 volumes:
   jenkins_home:
+
+networks:
+  e2e-test:
+    driver: bridge
