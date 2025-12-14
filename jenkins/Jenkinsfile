@@ -1,0 +1,31 @@
+pipeline {
+    agent none
+    
+    stages {
+        stage('Checkout') {
+            agent any
+            steps {
+                git branch: 'main',
+                url: 'https://github.com/bridgeshi85/playwright-pytest-allure-framework'
+            }
+        }
+
+        stage('Run UI Tests (Playwright Agent)') {
+            agent {
+                docker {
+                    image 'playwright-test-agent:latest'
+                    args '--network e2e-test'
+                    reuseNode true
+                }
+            }
+            steps {
+                sh '''
+                    set -euxo pipefail
+                    echo "Running tests..."
+                    cd playwright-automation-test
+                    pytest tests/test_login.py --env=jenkins -s
+                '''
+            }
+        }
+    }
+}

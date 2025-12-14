@@ -34,4 +34,4 @@ volumes:
 
 networks:
   e2e-test:
-    driver: bridge
+    name: e2e-test
