@@ -1,7 +1,6 @@
 import pytest
 import logging
 
-from playwright.async_api import ViewportSize
 from playwright.sync_api import ViewportSize
 from playwright.sync_api import sync_playwright
 from fixtures.report_fixture import save_screenshot
@@ -95,6 +94,6 @@ def page(browser, test_directory, request):
 
     # 2️⃣ 关闭页面和上下文
     logger.info("close the page")
-    context.close()
     page.close()
+    context.close()
 
