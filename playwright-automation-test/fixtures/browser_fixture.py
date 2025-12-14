@@ -94,6 +94,6 @@ def page(browser, test_directory, request):
 
     # 2️⃣ 关闭页面和上下文
     logger.info("close the page")
-    context.close()
     page.close()
+    context.close()
 
