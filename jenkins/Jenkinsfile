@@ -1,13 +1,12 @@
 pipeline {
     agent none
-
+    
     stages {
         stage('Checkout') {
             agent any
             steps {
                 git branch: 'main',
-                    credentialsId: '807fc010-8813-447e-8e91-b481d8904f50',
-                    url: 'https://github.com/bridgeshi85/playwright-pytest-allure-framework'
+                url: 'https://github.com/bridgeshi85/playwright-pytest-allure-framework'
             }
         }
 
@@ -15,14 +14,16 @@ pipeline {
             agent {
                 docker {
                     image 'playwright-test-agent:latest'
-                    reuseNode true     // 复用同一个workspace
+                    args '--network e2e-test'
+                    reuseNode true
                 }
             }
             steps {
                 sh '''
+                    set -euxo pipefail
+                    echo "Running tests..."
                     cd playwright-automation-test
-                    python --version
-                    pytest tests/test_login.py --env=default -s
+                    pytest tests/test_login.py --env=jenkins -s
                 '''
             }
         }
