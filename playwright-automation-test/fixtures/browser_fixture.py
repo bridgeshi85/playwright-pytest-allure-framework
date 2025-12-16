@@ -85,12 +85,10 @@ def page(browser, test_directory, request):
     page = context.new_page()
 
     yield page
-    rep = getattr(request.node, "rep_call", None)
-    logger.info("end test case: saving video and closing page")
-
-    # 1️⃣ 测试失败时截图并保存
-    if rep and rep.failed:
-        save_screenshot(page, test_directory)
+    # 获取video并保存路径到request.node，供后续allure报告使用
+    if page.video:
+        logger.info("save video path to request.node")
+        request.node._video_path = page.video.path()
 
     # 2️⃣ 关闭页面和上下文
     logger.info("close the page")
