@@ -82,7 +82,7 @@ def pytest_runtest_teardown(item, nextitem):
     logger.info("Test teardown, checking for video attachment")
     video_path = getattr(item, "_video_path", None)
     if video_path and os.path.exists(video_path):
-        logger.info("Save vide to Allure report")
+        logger.info("Save video to Allure report")
         allure.attach.file(
             video_path,
             name="Video",
