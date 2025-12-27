@@ -1,6 +1,14 @@
 pipeline {
     agent any
     
+    parameters {
+        string(
+            name: 'EMAIL_RECIPIENTS',
+            defaultValue: 'bridgeshi93@gmail.com',
+            description: 'Comma-separated list of email addresses to receive build notifications'
+        )
+    }
+    
     stages {
         stage('Checkout') {
             agent any
@@ -41,7 +49,7 @@ pipeline {
             
             emailext(
                 subject: "[${env.JOB_NAME}] Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
-                to: "bridgeshi93@gmail.com",
+                to: "${params.EMAIL_RECIPIENTS}",
                 mimeType: 'text/html',
                 body: """
                     <p><b>Build Status:</b> ${currentBuild.currentResult}</p>
