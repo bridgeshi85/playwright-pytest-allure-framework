@@ -1,11 +1,19 @@
 pipeline {
-    agent none
+    agent any
+    
+    parameters {
+        string(
+            name: 'EMAIL_RECIPIENTS',
+            defaultValue: 'bridgeshi93@gmail.com',
+            description: 'Comma-separated list of email addresses to receive build notifications'
+        )
+    }
     
     stages {
         stage('Checkout') {
             agent any
             steps {
-                git branch: 'main',
+                git branch: 'feature/allure-test-report',
                 url: 'https://github.com/bridgeshi85/playwright-pytest-allure-framework'
             }
         }
@@ -15,7 +23,7 @@ pipeline {
                 docker {
                     image 'playwright-test-agent:latest'
                     args '--network e2e-test'
-                    reuseNode true
+                    reuseNode true     // 复用同一个workspace
                 }
             }
             steps {
@@ -26,6 +34,35 @@ pipeline {
                     pytest tests/test_login.py --env=jenkins -s
                 '''
             }
+        }
+    }
+    
+    
+    post {
+        always {
+            allure(
+                includeProperties: false,
+                jdk: '',
+                resultPolicy: 'LEAVE_AS_IS',
+                results: [[path: 'playwright-automation-test/reports/allure-results']]
+            )
+            
+            emailext(
+                subject: "[${env.JOB_NAME}] Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
+                to: "${params.EMAIL_RECIPIENTS}",
+                mimeType: 'text/html',
+                body: """
+                    <p><b>Build Status:</b> ${currentBuild.currentResult}</p>
+                    <p><b>Job:</b> ${env.JOB_NAME}</p>
+                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                    <p><b>Build URL:</b>
+                       <a href="${env.BUILD_URL}">${env.BUILD_URL}</a>
+                    </p>
+                    <p><b>Allure Report:</b>
+                       <a href="${env.BUILD_URL}allure/">View Report</a>
+                    </p>
+                """
+            )
         }
     }
 }

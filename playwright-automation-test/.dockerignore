@@ -10,3 +10,4 @@ test-results
 .gitignore
 .vscode
 logs
+reports
