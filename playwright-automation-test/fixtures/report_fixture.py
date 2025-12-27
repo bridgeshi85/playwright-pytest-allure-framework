@@ -15,7 +15,7 @@ def save_screenshot(page, test_directory, filename="final-screenshot"):
     :param test_directory: 测试目录
     :param filename: 截图文件名
     :return: 截图文件路径
-    例如：test_results/2023-10-05-1/final-screenshot.png
+    例如：test_results/2024-06-01-1/final-screenshot.png
     """
     screenshot_path = test_directory / f"{filename}.png"
     page.screenshot(path=str(screenshot_path))
@@ -28,7 +28,7 @@ def test_directory(request):
     """
     创建测试结果目录
     目录格式：test_results/YYYY-MM-DD-序号
-    例如：test_results/2023-10-05-1
+    例如：test_results/2024-06-01-1
     目录中保存该次测试的所有结果文件，如截图、日志等。
     依赖于 test_results 目录的存在。如果不存在，则创建该目录。
     :param request:
