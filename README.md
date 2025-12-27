@@ -253,35 +253,3 @@ def test_login_success(page, config):
 ## 📝 License
 
 This project is open source and available under the [MIT License](LICENSE).
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Issue**: Tests fail with "browser not found"
-```bash
-# Solution: Install Playwright browsers
-playwright install chromium
-```
-
-**Issue**: Cannot connect to frontend in Docker
-```bash
-# Solution: Ensure containers are on the same network
-docker network ls
-# Check that e2e-test network exists
-```
-
-**Issue**: Permission denied on docker.sock
-```bash
-# Solution: Add user to docker group (Linux/Mac)
-sudo usermod -aG docker $USER
-# Then log out and back in
-```
-
-## 📧 Contact
-
-For questions or support, please open an issue in the GitHub repository.
-
----
-
-**Built with ❤️ using Playwright, Pytest, and Allure**
