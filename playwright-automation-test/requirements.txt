@@ -1,10 +1,12 @@
-playwright
-pytest
+playwright~=1.56.0
+pytest~=9.0.1
 pytest-xdist
 pytest-rerunfailures
 pytest-playwright
 allure-pytest
 loguru
-pyyaml
+pyyaml~=6.0.3
 rich
 requests
+
+allure-python-commons~=2.15.2

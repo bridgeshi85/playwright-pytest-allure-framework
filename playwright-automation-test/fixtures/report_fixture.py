@@ -8,16 +8,19 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def save_screenshot(page, test_directory, filename="final-screenshot.png"):
+def save_screenshot(page, test_directory, filename="final-screenshot"):
     """
     截图并记录日志
     :param page: 当前页面对象
     :param test_directory: 测试目录
     :param filename: 截图文件名
+    :return: 截图文件路径
+    例如：test_results/2023-10-05-1/final-screenshot.png
     """
-    screenshot_path = test_directory / filename
+    screenshot_path = test_directory / f"{filename}.png"
     page.screenshot(path=str(screenshot_path))
-    logger.info(f"Test failed, final screenshot saved at {screenshot_path}")
+    logger.info(f"Screenshot saved at {screenshot_path}")
+    return screenshot_path
 
 
 @pytest.fixture
