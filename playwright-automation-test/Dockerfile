@@ -26,6 +26,5 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 # 安装 Playwright 浏览器及依赖
 RUN playwright install --with-deps chromium
 
-
 # 默认命令（Jenkins 会覆盖）
 CMD ["/bin/bash"]
