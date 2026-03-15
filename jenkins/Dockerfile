@@ -23,6 +23,7 @@ RUN groupadd docker || true && usermod -aG docker jenkins
 # Switch back to jenkins user
 USER jenkins
 
+# 使用官方jenkins镜像源
 ENV JENKINS_UC="https://updates.jenkins.io"
 ENV JENKINS_UC_DOWNLOAD="https://updates.jenkins.io"
 ENV JENKINS_PLUGIN_INFO="https://updates.jenkins.io/plugin-versions.json"
