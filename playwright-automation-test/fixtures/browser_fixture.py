@@ -3,7 +3,8 @@ import logging
 
 from playwright.sync_api import ViewportSize
 from playwright.sync_api import sync_playwright
-from fixtures.report_fixture import save_screenshot
+from fixtures.report_fixture import save_screenshot, test_directory
+
 
 logger = logging.getLogger(__name__)
 
