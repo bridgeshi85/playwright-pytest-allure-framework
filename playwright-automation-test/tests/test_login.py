@@ -11,7 +11,6 @@ def test_login_success(page, config):
     login_page.goto(config["base_url"])
 
     # 2. 登录操作
-    # Todo - 暂时hardcode, 后续改为从文件读取实现data driven
     login_page.login("admin", "123456")
     # 3. 等待跳转到首页
 
