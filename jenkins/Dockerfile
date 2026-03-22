@@ -1,6 +1,7 @@
 FROM jenkins/jenkins:lts
 
-USER root
+# 以root用户运行，确保有权限访问docker.sock
+USER root 
 
 # -------- Install Docker CLI --------
 RUN apt-get update && \
@@ -16,12 +17,6 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y docker-ce-cli docker-compose-plugin && \
     rm -rf /var/lib/apt/lists/*
-
-# add jenkins to docker group
-RUN groupadd docker || true && usermod -aG docker jenkins
-
-# Switch back to jenkins user
-USER jenkins
 
 # 使用官方jenkins镜像源
 ENV JENKINS_UC="https://updates.jenkins.io"

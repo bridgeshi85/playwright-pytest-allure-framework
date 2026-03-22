@@ -11,9 +11,8 @@ pipeline {
     
     stages {
         stage('Checkout') {
-            agent any
             steps {
-                git branch: 'feature/allure-test-report',
+                git branch: 'main',
                 url: 'https://github.com/bridgeshi85/playwright-pytest-allure-framework'
             }
         }
