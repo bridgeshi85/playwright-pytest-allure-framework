@@ -9,5 +9,6 @@ test-results
 .idea
 .gitignore
 .vscode
-logs
-reports
+
+# 忽略所有测试输出产物
+output/
