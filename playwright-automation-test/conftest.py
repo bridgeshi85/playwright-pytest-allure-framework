@@ -1,6 +1,4 @@
 import os
-import pytest
-import logging
 import allure
 from utils.config_loader import load_config
 # Import fixtures to ensure they are registered
@@ -36,7 +34,7 @@ def config(pytestconfig):
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)
 def pytest_runtest_makereport(item, call):
     """
-    测试失败时截图并保存页面源代码到目录test_results/日期-x 比如 test_results/2024-06-01-2
+    测试失败时截图并保存页面源代码到目录output/screenshots/日期-x 比如 output/screenshots/2024-06-01-2
     并将其附加到 Allure 报告中
     生成的文件命名为 {测试用例名称}.png 和 {测试用例名称}.html
     例如：test_login.png, test_login.html

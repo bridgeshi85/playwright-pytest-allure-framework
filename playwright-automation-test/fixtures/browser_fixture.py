@@ -23,7 +23,10 @@ def create_context(browser, test_directory, locale="en-US"):
     :returns: A new browser context configured with the provided settings.
     :rtype: playwright.sync_api.BrowserContext
     """
-    video_dir = test_directory / "videos"
+    # Place videos alongside screenshots under the unified output root.
+    # test_directory is output/screenshots/<run-id>
+    output_root = test_directory.parent.parent
+    video_dir = output_root / "videos" / test_directory.name
     video_dir.mkdir(parents=True, exist_ok=True)
     context = browser.new_context(
         ignore_https_errors=True,
@@ -95,4 +98,3 @@ def page(browser, test_directory, request):
     logger.info("close the page")
     page.close()
     context.close()
-

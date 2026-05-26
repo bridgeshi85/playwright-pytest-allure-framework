@@ -1,2 +1,4 @@
 .idea
 *.log
+/playwright-automation-test/output
+/playwright-automation-test/allure-report
