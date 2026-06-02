@@ -43,6 +43,9 @@ def pytest_runtest_makereport(item, call):
     outcome = yield
     rep = outcome.get_result()
 
+    # 将每个阶段的报告存储到 item 上，供 page fixture 判断失败用
+    setattr(item, f"rep_{rep.when}", rep)
+
     # 测试成功时直接返回
     if rep.when == "call" or rep.passed:
         logger.info("Test passed, no screenshot or page source need to be saved")
