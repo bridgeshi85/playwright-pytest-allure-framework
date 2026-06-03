@@ -3,28 +3,27 @@ parse_trace.py  ── 属于 skills/triaging-e2e-failures/scripts/
 --------------------------------------------------------------
 Step 1（确定性解析）：解压 Playwright trace.zip → 结构化 JSON + 文本摘要。
 
-Playwright trace.zip 内部结构（简化）：
+Playwright trace.zip 内部结构（v8 格式）：
   - trace.trace   / 0-trace.trace   : 主事件流 (NDJSON)
   - trace.network / 0-trace.network : 网络请求 (NDJSON)
-  - resources/                      : 截图、DOM 快照等
+  - trace.stacks                    : 调用栈（JSON）
+  - resources/                      : 截图、源码等
 
-本模块只依赖 Python 标准库，无需任何第三方包。
+事件字段说明（v8 格式）：
+  before 事件: {"type":"before", "callId":"call@91", "class":"Frame",
+               "method":"click", "params":{...}, "beforeSnapshot":"before@call@91"}
+  after  事件: {"type":"after",  "callId":"call@91", "endTime":...,
+               "error":{...}, "afterSnapshot":"after@call@91"}
+  frame-snapshot 事件: {"type":"frame-snapshot",
+                        "snapshot":{"snapshotName":"before@call@91",
+                                    "frameUrl":"...", "html":[...]}}
 
-调用示例
---------
-    # 作为模块导入
-    from skills.triaging_e2e_failures.scripts.parse_trace import parse_trace, build_summary
-
-    parsed = parse_trace("output/traces/2026-05-26-1/test_login.zip")
-    print(build_summary(parsed))          # 交给 AI 做 Step 2/3/4
-    print(parsed.to_json(indent=2))       # 或直接操作结构化数据
-
-    # 命令行直接运行
-    python parse_trace.py <trace.zip> [--dom] [--json] [--out result.json]
+本模块只依赖 Python 标准库。
 """
 from __future__ import annotations
 
 import json
+import re
 import zipfile
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -40,12 +39,16 @@ class TraceAction:
     """单个 Playwright action 的精简表示"""
 
     action_id: str = ""
-    api_name: str = ""        # e.g. "page.click", "locator.fill"
-    selector: str = ""
+    api_name: str = ""        # e.g. "frame.click", "page.goto"
+    selector: str = ""        # 人类可读的 selector（已从 internal: 格式转换）
+    selector_raw: str = ""    # Playwright 原始 internal: 格式
+    url: str = ""             # page.goto / frame.goto 的目标 URL
     start_time: float = 0.0
     end_time: float = 0.0
-    error: str | None = None  # 非 None 表示该 action 失败
-    stack_top: str | None = None  # 用户代码位置（文件:行 函数名）
+    error: str | None = None
+    stack_top: str | None = None
+    before_snapshot: str = "" # 关联的 frame-snapshot 名称
+    after_snapshot: str = ""
 
 
 @dataclass
@@ -54,13 +57,15 @@ class ParsedTrace:
 
     trace_path: str = ""
     total_actions: int = 0
+    current_page_url: str = ""
     failed_action: TraceAction | None = None
     actions_before_failure: list[TraceAction] = field(default_factory=list)
     console_errors: list[str] = field(default_factory=list)
     page_errors: list[str] = field(default_factory=list)
     network_failures: list[dict[str, Any]] = field(default_factory=list)
-    dom_snapshot_excerpt: str | None = None
-    screenshots: list[str] = field(default_factory=list)  # zip 内部路径
+    dom_testids: list[dict[str, str]] = field(default_factory=list)  # 失败前页面所有 data-testid
+    dom_snapshot_excerpt: str | None = None   # 保留兼容
+    screenshots: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -89,22 +94,99 @@ def _read_ndjson(zf: zipfile.ZipFile, name: str) -> list[dict[str, Any]]:
     return events
 
 
+def _parse_selector(raw: str) -> str:
+    """
+    将 Playwright internal: 格式的 selector 转换为人类可读形式。
+
+    例：
+      internal:testid=[data-testid="btn-edit"s]  → [data-testid="btn-edit"]
+      internal:role=button[name="Submit"l]       → role=button[name="Submit"]
+      internal:text="Submit"                     → text="Submit"
+    """
+    if not raw or not raw.startswith("internal:"):
+        return raw
+
+    # testid: internal:testid=[data-testid="xxx"s]
+    m = re.search(r'data-testid="([^"]+)"', raw)
+    if m:
+        return f'[data-testid="{m.group(1)}"]'
+
+    # 去掉 internal: 前缀，去掉尾部的 s/l/i 修饰符
+    readable = raw[len("internal:"):]
+    readable = re.sub(r'(["\]])[sliSLI](\]|$)', r'\1\2', readable)
+    return readable
+
+
+def _build_api_name(ev: dict[str, Any]) -> str:
+    """从 before 事件的 class + method 构造 api_name（v8 格式）。"""
+    cls = ev.get("class", "")
+    method = ev.get("method", "")
+    # 旧格式兼容
+    if not cls:
+        return ev.get("apiName", "")
+    return f"{cls.lower()}.{method}" if method else cls.lower()
+
+
+def _extract_testids(node: Any, results: list | None = None) -> list[dict[str, str]]:
+    """
+    递归从 frame-snapshot HTML 嵌套数组中提取所有 data-testid 元素。
+
+    snapshot 的 html 字段格式：["TAG", {attrs}, child1, child2, ...]
+    """
+    if results is None:
+        results = []
+    if not isinstance(node, list) or len(node) < 2:
+        return results
+
+    tag = node[0] if isinstance(node[0], str) else None
+    attrs = node[1] if isinstance(node[1], dict) else {}
+    children = node[2:] if len(node) > 2 else []
+
+    if tag:
+        testid = attrs.get("data-testid")
+        if testid:
+            text_parts: list[str] = []
+
+            def _collect_text(n: Any) -> None:
+                if isinstance(n, str):
+                    text_parts.append(n)
+                elif isinstance(n, list) and len(n) > 2:
+                    for child in n[2:]:
+                        _collect_text(child)
+
+            for child in children:
+                _collect_text(child)
+            text = "".join(text_parts).strip()[:120]
+            results.append({"tag": tag.lower(), "testid": testid, "text": text})
+
+    for child in children:
+        if isinstance(child, list):
+            _extract_testids(child, results)
+
+    return results
+
+
+def _is_locator_action(api_name: str) -> bool:
+    locator_classes = ("locator", "frame", "page", "elementhandle")
+    locator_methods = ("click", "fill", "wait_for", "check", "hover",
+                       "type", "press", "select_option", "dispatch_event",
+                       "inner_text", "inner_html", "text_content", "get_attribute")
+    parts = api_name.lower().split(".")
+    cls = parts[0] if parts else ""
+    method = parts[1] if len(parts) > 1 else ""
+    return cls in locator_classes and any(m in method for m in locator_methods)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def parse_trace(trace_path: str | Path, context_window: int = 10) -> ParsedTrace:
-    """
-    解析单个 trace.zip，返回 ParsedTrace（结构化 JSON）。
-
-    :param trace_path:     trace.zip 路径
-    :param context_window: 失败 action 之前保留的 action 数（供 AI 分析上下文用）
-    """
     trace_path = Path(trace_path)
     result = ParsedTrace(trace_path=str(trace_path))
 
     with zipfile.ZipFile(trace_path) as zf:
-        # ── 读取事件流（兼容不同版本文件名）──────────────────────────────
+        # ── 读取事件流 ────────────────────────────────────────────────────
         trace_events: list[dict[str, Any]] = []
         for candidate in ("trace.trace", "0-trace.trace"):
             trace_events.extend(_read_ndjson(zf, candidate))
@@ -112,6 +194,18 @@ def parse_trace(trace_path: str | Path, context_window: int = 10) -> ParsedTrace
         network_events: list[dict[str, Any]] = []
         for candidate in ("trace.network", "0-trace.network"):
             network_events.extend(_read_ndjson(zf, candidate))
+
+        # ── 收集 frame-snapshot（完整快照，不含 delta 引用）────────────────
+        # html 是完整快照时第一个元素是字符串（tag name），
+        # 是 delta 引用时是 [[num, num]] 格式
+        full_snapshots: dict[str, dict[str, Any]] = {}
+        for ev in trace_events:
+            if ev.get("type") == "frame-snapshot":
+                snap = ev.get("snapshot", {})
+                name = snap.get("snapshotName", "")
+                html = snap.get("html", [])
+                if name and isinstance(html, list) and html and isinstance(html[0], str):
+                    full_snapshots[name] = snap
 
         # ── 收集 actions（before/after 配对）────────────────────────────
         actions_by_id: dict[str, TraceAction] = {}
@@ -123,19 +217,23 @@ def parse_trace(trace_path: str | Path, context_window: int = 10) -> ParsedTrace
 
             if t == "before":
                 params = ev.get("params") or {}
+                api_name = _build_api_name(ev)
+
+                raw_selector = ""
+                url = ""
+                if isinstance(params, dict):
+                    raw_selector = params.get("selector", "")
+                    url = params.get("url", "")
+
                 a = TraceAction(
                     action_id=cid,
-                    api_name=ev.get("apiName", ""),
-                    selector=params.get("selector", "") if isinstance(params, dict) else "",
+                    api_name=api_name,
+                    selector=_parse_selector(raw_selector),
+                    selector_raw=raw_selector,
+                    url=url,
                     start_time=float(ev.get("startTime") or 0),
+                    before_snapshot=ev.get("beforeSnapshot", ""),
                 )
-                stack = ev.get("stack") or []
-                if stack and isinstance(stack[0], dict):
-                    top = stack[0]
-                    a.stack_top = (
-                        f"{top.get('file', '')}:{top.get('line', '')} "
-                        f"{top.get('function', '')}"
-                    )
                 actions_by_id[cid] = a
                 order.append(cid)
 
@@ -144,12 +242,14 @@ def parse_trace(trace_path: str | Path, context_window: int = 10) -> ParsedTrace
                 if a is None:
                     continue
                 a.end_time = float(ev.get("endTime") or 0)
+                a.after_snapshot = ev.get("afterSnapshot", "")
                 err = ev.get("error")
                 if err:
                     a.error = err.get("message") if isinstance(err, dict) else str(err)
 
             elif t == "console":
-                if (ev.get("messageType") or ev.get("type")) == "error":
+                msg_type = ev.get("messageType") or ev.get("type", "")
+                if msg_type == "error":
                     result.console_errors.append(ev.get("text", ""))
 
             elif t == "event" and ev.get("method") == "pageerror":
@@ -169,6 +269,37 @@ def parse_trace(trace_path: str | Path, context_window: int = 10) -> ParsedTrace
         else:
             result.actions_before_failure = actions_ordered[-context_window:]
 
+        # ── 推导失败时所在页面 URL ───────────────────────────────────────
+        all_before = result.actions_before_failure + (
+            [result.failed_action] if result.failed_action else []
+        )
+        for a in reversed(all_before):
+            if a.url:
+                result.current_page_url = a.url
+                break
+
+        # ── 提取失败前 DOM 中的 data-testid 元素 ────────────────────────
+        # 策略：找失败 action 的 beforeSnapshot，若是 delta 则向前找最近的完整快照
+        target_snap = None
+        if result.failed_action:
+            snap_name = result.failed_action.before_snapshot
+            if snap_name in full_snapshots:
+                target_snap = full_snapshots[snap_name]
+            else:
+                # delta 引用：向前查找同一 URL 的最近完整快照
+                for a in reversed(all_before):
+                    for candidate_name in (a.after_snapshot, a.before_snapshot):
+                        if candidate_name in full_snapshots:
+                            snap = full_snapshots[candidate_name]
+                            if snap.get("frameUrl") == result.current_page_url or not result.current_page_url:
+                                target_snap = snap
+                                break
+                    if target_snap:
+                        break
+
+        if target_snap:
+            result.dom_testids = _extract_testids(target_snap.get("html", []))
+
         # ── 网络失败（4xx / 5xx）────────────────────────────────────────
         for ev in network_events:
             status = ev.get("status") or (ev.get("response") or {}).get("status")
@@ -179,65 +310,58 @@ def parse_trace(trace_path: str | Path, context_window: int = 10) -> ParsedTrace
                     "method": ev.get("method") or (ev.get("request") or {}).get("method"),
                 })
 
-        # ── 截图（最多 5 张）────────────────────────────────────────────
+        # ── 截图 ─────────────────────────────────────────────────────────
         result.screenshots = [
             n for n in zf.namelist()
             if n.startswith("resources/") and n.endswith((".jpeg", ".png"))
         ][:5]
 
-        # ── DOM 快照片段（最后一个，截取前 4KB）──────────────────────────
-        snapshot_files = [
-            n for n in zf.namelist()
-            if "snapshot" in n.lower() and n.endswith((".html", ".json"))
-        ]
-        if snapshot_files:
-            try:
-                with zf.open(snapshot_files[-1]) as fp:
-                    result.dom_snapshot_excerpt = fp.read(4096).decode("utf-8", errors="ignore")
-            except Exception:
-                pass
-
     return result
 
 
-def build_summary(parsed: ParsedTrace, include_dom: bool = False,
+def build_summary(parsed: ParsedTrace, include_dom: bool | None = None,
                   max_context: int = 10) -> str:
     """
-    将 ParsedTrace 转换为人类可读 + AI 友好的文本摘要。
+    生成 AI 友好的文本摘要（供 Step 2/3/4 推理）。
 
-    供 Skill STEP 2（分类）、STEP 3（修复）、STEP 4（报告）推理使用。
-
-    :param parsed:      parse_trace() 的返回值
-    :param include_dom: 是否附加 DOM 快照片段（token 较多，默认关闭）
-    :param max_context: 失败前最多展示几个 action
+    include_dom:
+      None（默认）= 智能模式：失败 action 为 locator 类时自动附加 data-testid 元素表
+      True        = 强制附加
+      False       = 强制不附加
     """
     lines: list[str] = [
         f"📁 trace 文件 : {parsed.trace_path}",
         f"📊 总 action 数: {parsed.total_actions}",
     ]
 
+    if parsed.current_page_url:
+        lines.append(f"🌍 当前页面 URL : {parsed.current_page_url}")
+
     # ── 失败 action ──────────────────────────────────────────────────────
     if parsed.failed_action:
         fa = parsed.failed_action
-        lines += [
-            "",
-            "❌ [失败 ACTION]",
-            f"   api_name  : {fa.api_name}",
-            f"   selector  : {fa.selector!r}",
-            f"   error     : {fa.error}",
-        ]
+        lines += ["", "❌ [失败 ACTION]", f"   api_name  : {fa.api_name}"]
+        if fa.selector:
+            lines.append(f"   selector  : {fa.selector}")
+        if fa.url:
+            lines.append(f"   url       : {fa.url}")
+        lines.append(f"   error     : {fa.error}")
         if fa.stack_top:
             lines.append(f"   stack_top : {fa.stack_top}")
     else:
-        lines += ["", "⚠️  未检测到明确失败 action（可能是断言失败或超时）"]
+        lines += ["", "⚠️  未检测到明确失败 action"]
 
     # ── 失败前 actions ────────────────────────────────────────────────────
     context_actions = parsed.actions_before_failure[-max_context:]
     if context_actions:
         lines += ["", f"🔁 [失败前最后 {len(context_actions)} 个 actions]"]
         for a in context_actions:
-            suffix = f" — selector={a.selector!r}" if a.selector else ""
-            lines.append(f"   · {a.api_name}{suffix}")
+            parts = [f"   · {a.api_name}"]
+            if a.url:
+                parts.append(f"url={a.url!r}")
+            if a.selector:
+                parts.append(f"selector={a.selector!r}")
+            lines.append(" — ".join(parts))
 
     # ── Console errors ───────────────────────────────────────────────────
     if parsed.console_errors:
@@ -257,36 +381,60 @@ def build_summary(parsed: ParsedTrace, include_dom: bool = False,
         for nf in parsed.network_failures[:10]:
             lines.append(f"   · {nf.get('method')} {nf.get('status')} {nf.get('url')}")
 
-    # ── 截图路径（trace 内部）────────────────────────────────────────────
+    # ── 截图 ─────────────────────────────────────────────────────────────
     if parsed.screenshots:
         lines += ["", "📸 [截图（trace 内部路径，最多 5 张）]"]
         for s in parsed.screenshots:
             lines.append(f"   · {s}")
 
-    # ── DOM 快照（可选）──────────────────────────────────────────────────
-    if include_dom and parsed.dom_snapshot_excerpt:
-        lines += ["", "🗂  [DOM 快照片段（前 2KB）]", parsed.dom_snapshot_excerpt[:2048]]
+    # ── DOM data-testid 元素表（智能模式）────────────────────────────────
+    should_include = (
+        bool(parsed.dom_testids)
+        and (
+            include_dom is True
+            or (
+                include_dom is None
+                and parsed.failed_action is not None
+                and _is_locator_action(parsed.failed_action.api_name)
+            )
+        )
+    )
+
+    if should_include:
+        auto_note = " [自动附加：locator 失败，需 DOM 上下文辅助分类]" if include_dom is None else ""
+        lines += ["", f"🗂  [失败前页面 data-testid 元素表{auto_note}]"]
+        for item in parsed.dom_testids:
+            text_part = f'  →  "{item["text"]}"' if item["text"] else ""
+            lines.append(f'   · <{item["tag"]} data-testid="{item["testid"]}"{text_part}')
 
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# CLI — python parse_trace.py <trace.zip> [--dom] [--json] [--out FILE]
+# CLI
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
     import sys
 
-    ap = argparse.ArgumentParser(description="Step 1：解析 Playwright trace.zip → 结构化 JSON / 文本摘要")
+    ap = argparse.ArgumentParser(
+        description="Step 1：解析 Playwright trace.zip → 结构化 JSON / 文本摘要"
+    )
     ap.add_argument("trace", help="trace.zip 路径")
-    ap.add_argument("--dom", action="store_true", help="在摘要中包含 DOM 快照片段")
-    ap.add_argument("--json", dest="as_json", action="store_true",
-                    help="输出完整 JSON 而非文本摘要")
-    ap.add_argument("--out", default=None, help="保存到文件（默认打印到 stdout）")
+    dom_group = ap.add_mutually_exclusive_group()
+    dom_group.add_argument("--dom", action="store_true", help="强制附加 data-testid 元素表")
+    dom_group.add_argument("--no-dom", action="store_true", help="强制不附加")
+    ap.add_argument("--json", dest="as_json", action="store_true", help="输出完整 JSON")
+    ap.add_argument("--out", default=None, help="保存到文件（默认 stdout）")
     args = ap.parse_args()
 
     result = parse_trace(args.trace)
-    output = result.to_json() if args.as_json else build_summary(result, include_dom=args.dom)
+
+    if args.as_json:
+        output = result.to_json()
+    else:
+        flag: bool | None = True if args.dom else (False if args.no_dom else None)
+        output = build_summary(result, include_dom=flag)
 
     if args.out:
         Path(args.out).write_text(output, encoding="utf-8")
@@ -294,4 +442,3 @@ if __name__ == "__main__":
     else:
         print(output)
     sys.exit(0)
-
