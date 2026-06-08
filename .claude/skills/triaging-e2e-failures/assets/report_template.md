@@ -1,142 +1,71 @@
-# E2E 失败根因分析报告模板
+# E2E 失败根因汇总报告模板
 
-> Step 4 报告模板：AI 填写以下结构并输出 Markdown，禁止省略任何一级标题。
+> 每次触发 Skill 后，AI 按以下模板输出一份 Markdown 报告。
+> 若本次分析包含多个 trace，每个 trace 占表格一行；单个 trace 同样使用此格式。
 
 ---
 
 ```markdown
-# 🔍 E2E 失败根因分析报告
+# 🔍 E2E 失败根因汇总报告
 
-> **生成时间**: YYYY-MM-DD HH:MM  
-> **Skill 版本**: triaging-e2e-failures v2
-
----
-
-## 基本信息
-
-| 字段 | 值 |
-|------|----|
-| **Trace 文件** | `<路径>` |
-| **失败 API** | `<api_name>` |
-| **失败 Selector** | `<selector>` |
-| **错误信息** | `<error message>` |
-| **用户代码位置** | `<stack_top>` |
-| **总 Action 数** | `<total_actions>` |
+> 生成时间：YYYY-MM-DD HH:MM  
+> 分析用例数：N
 
 ---
 
-## 1. 分类结论
+## 汇总表
 
-- **类别**: `<category>`
-- **置信度**: **0.xx**
-- **判断依据**: <一句话说明依据来自哪个规则>
-- **关键证据**:
+| 用例 | 分类 | 置信度 | 失败原因 | 修复方向 | 代码位置 |
+|------|------|--------|----------|----------|----------|
+| `<test_name>` | `<category/sub_category>` | 0.xx | <一句话说明为什么失败> | <一句话说明如何修> | `<stack_top>` |
+
+> ⚠️ 置信度 < 0.6 的行，在"分类"列后加注 `（建议人工复核）`
+
+---
+
+## 逐条详情
+
+### `<test_name>`
+
+- **分类**：`<category>` / `<sub_category>`  
+- **置信度**：0.xx（命中 `<matched_rule>`）  
+- **失败原因**：<中文，≤100 字，说清楚"因为什么导致失败">  
+- **关键证据**：
   - `<evidence 1>`
   - `<evidence 2>`
-  - `<evidence 3（可选）>`
-
-> ⚠️ 置信度 < 0.6 时：请在此处补充"建议人工复核，不确定点：..."
-
----
-
-## 2. 关键证据
-
-### Console Errors
-<!-- 无则填写：无 -->
-- `<console error 1>`
-
-### Network Failures
-<!-- 无则填写：无 -->
-- `<METHOD> <STATUS> <URL>`
-
-### 截图
-<!-- 无则填写：无（trace 中未包含截图） -->
-- `<trace 内部截图路径>`
-
-### 失败前操作序列（最近 N 步）
-<!-- 列出失败前的关键 actions，帮助理解操作上下文 -->
-1. `<api_name>` — `<selector>`
-2. `<api_name>` — `<selector>`
-3. ❌ `<failed_api_name>` — `<selector>` ← 失败点
+- **修复方向**：<具体的修复操作，针对不同分类填写如下>
+  - `flaky_test/selector_renamed`：将 `<old_selector>` 替换为 `<suggested_fix_selector>`
+  - `flaky_test/element_missing`：运行 `playwright show-trace <trace.zip>` 确认页面实际内容，检查是否延迟渲染或功能已删除
+  - `real_bug/api_failure`：检查 `<METHOD> <STATUS> <URL>` 对应的后端接口，提交缺陷工单
+  - `flaky_data`：检查 fixture 的数据清理逻辑，确保测试前置条件满足
+  - `unknown`：证据不足，建议人工打开 `playwright show-trace <trace.zip>` 排查
+- **代码位置**：`<stack_top>`
 
 ---
 
-## 3. 根因分析
-
-<!-- 中文，150 字以内，解释"为什么会失败" -->
-
-<根因说明>
+<!-- 下一条用例重复上述结构 -->
 
 ---
 
-## 4. 修复建议 / 下一步
-
-<!-- 根据 category 填写对应内容 -->
-
-### flaky_element → 修复代码
-
-**问题所在文件**: `<pages/xxx_page.py 或 tests/xxx.py>`
-
-**原代码**:
-```python
-# 原来的写法
-<original_code_line>
+*报告由 AI Skill **triaging-e2e-failures** 自动生成 · 置信度 < 0.6 建议人工复核*
 ```
 
-**推荐 Selector**（若原 selector 可优化）:
-```
-<new_selector>
-```
-
-**修复代码**:
-```python
-# 修复后的写法
-<fixed_code>
-```
-
-**补充说明**（可选）:
-> <额外背景说明>
-
 ---
 
-### real_bug → 提交缺陷工单
+## 填写说明
 
-- **现象**: <描述实际行为>
-- **预期**: <描述期望行为>
-- **复现步骤**: 运行 `pytest <test_path> --env=default`
-- **建议优先级**: P<1/2/3>
+### 汇总表字段说明
 
----
+| 字段 | 来源 | 说明 |
+|------|------|------|
+| 用例 | `trace 文件名 / 测试函数名` | 去掉路径前缀，只保留函数名 |
+| 分类 | Step 2 triage 结果 `category/sub_category` | 格式如 `real_bug/api_failure` |
+| 置信度 | Step 2 triage 结果 `confidence` | 保留两位小数 |
+| 失败原因 | Step 2 `reasoning` 浓缩 | 一句话，不超过 30 字 |
+| 修复方向 | Step 2 `suggested_fix_selector` 或规则模板 | 可操作的动作描述 |
+| 代码位置 | `stack_top` 字段 | 格式：`文件名:行号 函数名` |
 
-### flaky_data → 数据修复
+### 逐条详情触发条件
 
-- **缺失/脏数据**: <描述>
-- **修复方案**: <初始化脚本 / 手动配置 / 前置 fixture>
-
----
-
-### flaky_env → 运维检查
-
-- **疑似原因**: <服务不可用 / 网络超时 / 配置错误>
-- **建议**: 检查 `<服务名>` 运行状态，查看 `<日志路径>`
-
----
-
-### unknown → 人工复核
-
-- **可疑证据**: <列出所有疑点>
-- **建议下一步**: 手动打开 trace 文件，执行 `playwright show-trace <trace.zip>`
-
----
-
-## 5. 预防建议（可选）
-
-<!-- 如果有通用改进建议，在此列出 -->
-- [ ] <建议 1>
-- [ ] <建议 2>
-
----
-
-*报告由 AI Skill **triaging-e2e-failures** 自动生成 · 如有疑问请人工复核*
-```
-
+- 默认输出汇总表 + 所有用例的逐条详情
+- 若用例数 > 5，优先展示汇总表；逐条详情仅展示置信度最高和置信度最低（`unknown`）的各一条，其余省略并注明"如需查看完整详情，请单独分析对应 trace"

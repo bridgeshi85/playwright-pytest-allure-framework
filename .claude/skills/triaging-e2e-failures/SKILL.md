@@ -65,75 +65,62 @@ python .claude/skills/triaging-e2e-failures/scripts/parse_trace.py \
 #### Step 2：读取摘要 → 参照 `references/triage_rules.md` 分类
 
 读取 `.claude/skills/triaging-e2e-failures/references/triage_rules.md`，对上一步生成的摘要判断：
-- 失败类别（`real_bug` / `flaky_element` / `flaky_data` / `flaky_env` / `unknown`）
+- 失败类别（`real_bug` / `flaky_test` / `flaky_data` / `unknown`）
+- 子类别（`api_failure` / `selector_renamed` / `element_missing` / `data_contamination` / `data_setup_missing`）
 - 置信度（0.0 ~ 1.0）
 - 关键证据列表
 
 **内部推理格式（不直接展示给用户）**：
 ```json
 {
-  "category": "flaky_element",
+  "category": "flaky_test",
+  "sub_category": "element_missing",
   "confidence": 0.87,
-  "reasoning": "失败 action 为 locator.click，错误为 TimeoutError，DOM 快照中未见目标元素",
+  "matched_rule": "Rule 3",
+  "reasoning": "失败 action 为 locator.click，错误为 TimeoutError，DOM 快照中未见目标元素且无相似替代",
   "key_evidence": [
     "action: locator.click selector='#submit-btn'",
-    "error: Timeout 30000ms exceeded"
-  ]
+    "error: Timeout 30000ms exceeded",
+    "dom_testids 中不存在 submit-btn 及近似元素"
+  ],
+  "suggested_fix_selector": null
 }
 ```
 
-**置信度 < 0.6 时**：报告中标注"建议人工复核"。
+**置信度 < 0.5 时**：自动分类为 `unknown`。  
+**置信度 0.5 ~ 0.6 时**：保留分类结论，但报告中标注"建议人工复核"。
 
-#### Step 3：生成修复建议（仅 `flaky_element`）
-
-参照 `.claude/skills/triaging-e2e-failures/references/fix_patterns.md`，结合：
-- 失败 action 的 `api_name` + `selector`
-- 失败前操作序列
-- DOM 快照中实际存在的元素（若有）
-
-输出：
-1. 根因（中文，≤150 字）
-2. 推荐 selector（若原 selector 可优化）
-3. 修复代码片段（可直接替换原行）
-4. 补充说明（可选）
-
-#### Step 4：按 `assets/report_template.md` 输出报告
+#### Step 3：按 `assets/report_template.md` 输出报告
 
 严格遵循 `.claude/skills/triaging-e2e-failures/assets/report_template.md` 模板结构，不省略任何一级标题，根据 category 只填写对应的"修复建议"分支。
 
----
 
-### 场景 B：用户尚未运行测试
+#### Step 4: 自动修复（可选，需用户确认）
+报告输出完毕后，询问用户：
 
-先引导运行测试以生成 trace：
+"是否需要自动修复？"
 
-```bash
-cd playwright-automation-test
-pytest tests/<failing_test>.py --env=default
-# 失败后 trace 自动保存到 output/traces/<日期-序号>/<test_name>.zip
-```
+判断逻辑：
+- 置信度 >= 0.7 AND category == "flaky_test" AND sub_category == "selector_renamed"
+  → 主动建议自动修复，并说明将修改哪个文件的哪一行
+- 置信度 >= 0.7 AND category 为其他可修复类型
+  → 询问是否需要自动修复，并列出将要执行的操作
+- 置信度 < 0.7
+  → 说明"当前置信度（0.xx）低于建议阈值 0.7，不建议自动修复，建议人工复核后再决定"
+  → 仍然提供修复方案供参考，但不主动执行
 
-然后走场景 A，trace 路径填写 `playwright-automation-test/output/traces/<日期-序号>/<test_name>.zip`。
+**询问话术模板**：
 
----
+> 报告已生成。
+>
+> **是否需要自动修复？**
+>
+> - 分类：`<category>(<sub_category>)`，置信度：**0.xx**
+> - 修复内容：将 `<文件路径>` 第 N 行的 `<原 selector>` 替换为 `<新 selector>`
+>
+> ✅ 置信度 >= 0.7，建议执行自动修复。回复"是"或"执行修复"即可。
 
-## 相关文件（项目集成）
-
-```
-pw-pytest-allure/
-├── .claude/
-│   └── skills/
-│       └── triaging-e2e-failures/  ← 本 Skill 目录（项目级，随 git 分发）
-└── playwright-automation-test/
-    ├── output/
-    │   ├── traces/                 ← trace.zip 自动生成位置
-    │   └── reports/                ← 根因报告输出位置
-    ├── utils/
-    │   ├── trace_parser.py         ← 兼容垫片（重新导出 skill 实现）
-    │   └── ai_failure_analyzer.py  ← 旧 CLI 入口（兼容保留）
-    └── fixtures/
-        └── browser_fixture.py      ← 测试失败时自动保存 trace.zip
-```
+若用户确认，执行修复并输出 diff；若用户拒绝或置信度不足，输出修复代码供用户手动应用。
 
 ---
 

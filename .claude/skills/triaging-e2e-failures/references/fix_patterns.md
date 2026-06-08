@@ -1,9 +1,5 @@
 # Fix Patterns — 修复建议规则
 
-> Step 3 参考文档：当 Step 2 分类结果为 `flaky_element` 时，AI 根据以下模式生成可执行修复代码。
-
----
-
 ## 通用修复原则
 
 1. **优先使用语义化 selector**：`get_by_role`、`get_by_text`、`get_by_label` > CSS > XPath

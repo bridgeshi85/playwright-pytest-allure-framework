@@ -66,6 +66,7 @@ class ParsedTrace:
     dom_testids: list[dict[str, str]] = field(default_factory=list)  # 失败前页面所有 data-testid
     dom_snapshot_excerpt: str | None = None   # 保留兼容
     screenshots: list[str] = field(default_factory=list)
+    assertion_detail: dict[str, str] = field(default_factory=dict)  # AssertionError 的 expected/actual
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -316,6 +317,49 @@ def parse_trace(trace_path: str | Path, context_window: int = 10) -> ParsedTrace
             if n.startswith("resources/") and n.endswith((".jpeg", ".png"))
         ][:5]
 
+        # ── AssertionError expected/actual 提取 ─────────────────────────
+        # Playwright expect() 断言失败时，error.message 含结构化 diff
+        # pytest 原生 assert 失败时，错误信息出现在 page_errors 或 failed_action.error
+        assertion_sources: list[str] = []
+        if result.failed_action and result.failed_action.error:
+            assertion_sources.append(result.failed_action.error)
+        assertion_sources.extend(result.page_errors)
+        assertion_sources.extend(result.console_errors)
+
+        for src in assertion_sources:
+            if not src:
+                continue
+            detail: dict[str, str] = {}
+            # Playwright expect() 格式：Expected string: "..." / Received string: "..."
+            m_exp = re.search(r'Expected (?:string|value|text)[:\s]+"?([^\n"]+)"?', src, re.IGNORECASE)
+            m_rec = re.search(r'(?:Received|Actual) (?:string|value|text)[:\s]+"?([^\n"]+)"?', src, re.IGNORECASE)
+            if m_exp:
+                detail["expected"] = m_exp.group(1).strip()
+            if m_rec:
+                detail["actual"] = m_rec.group(1).strip()
+
+            # pytest assert 格式：AssertionError: assert 'actual' == 'expected'
+            # 或自定义消息：邮箱不匹配：期望 xxx，实际 yyy
+            if not detail:
+                m_assert = re.search(
+                    r"(?:期望|expected)[^\S\n]*[：:]\s*([^\s,，]+)[^\n]*(?:实际|actual)[^\S\n]*[：:]\s*([^\s\n]+)",
+                    src, re.IGNORECASE
+                )
+                if m_assert:
+                    detail["expected"] = m_assert.group(1).strip()
+                    detail["actual"] = m_assert.group(2).strip()
+
+            # assert a == b 格式：AssertionError: assert 'x' == 'y'
+            if not detail:
+                m_eq = re.search(r"assert\s+'([^']+)'\s*==\s+'([^']+)'", src)
+                if m_eq:
+                    detail["actual"] = m_eq.group(1).strip()
+                    detail["expected"] = m_eq.group(2).strip()
+
+            if detail:
+                result.assertion_detail = detail
+                break
+
     return result
 
 
@@ -350,6 +394,14 @@ def build_summary(parsed: ParsedTrace, include_dom: bool | None = None,
             lines.append(f"   stack_top : {fa.stack_top}")
     else:
         lines += ["", "⚠️  未检测到明确失败 action"]
+
+    # ── AssertionError 断言 diff（高置信度分类关键证据）────────────────────
+    if parsed.assertion_detail:
+        lines += ["", "🔎 [断言差异 (AssertionError)]"]
+        if "expected" in parsed.assertion_detail:
+            lines.append(f'   期望值 (expected) : "{parsed.assertion_detail["expected"]}"')
+        if "actual" in parsed.assertion_detail:
+            lines.append(f'   实际值 (actual)   : "{parsed.assertion_detail["actual"]}"')
 
     # ── 失败前 actions ────────────────────────────────────────────────────
     context_actions = parsed.actions_before_failure[-max_context:]
