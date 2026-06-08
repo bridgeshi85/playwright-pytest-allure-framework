@@ -39,15 +39,15 @@ class TraceAction:
     """单个 Playwright action 的精简表示"""
 
     action_id: str = ""
-    api_name: str = ""        # e.g. "frame.click", "page.goto"
-    selector: str = ""        # 人类可读的 selector（已从 internal: 格式转换）
-    selector_raw: str = ""    # Playwright 原始 internal: 格式
-    url: str = ""             # page.goto / frame.goto 的目标 URL
+    api_name: str = ""  # e.g. "frame.click", "page.goto"
+    selector: str = ""  # 人类可读的 selector（已从 internal: 格式转换）
+    selector_raw: str = ""  # Playwright 原始 internal: 格式
+    url: str = ""  # page.goto / frame.goto 的目标 URL
     start_time: float = 0.0
     end_time: float = 0.0
     error: str | None = None
     stack_top: str | None = None
-    before_snapshot: str = "" # 关联的 frame-snapshot 名称
+    before_snapshot: str = ""  # 关联的 frame-snapshot 名称
     after_snapshot: str = ""
 
 
@@ -64,8 +64,8 @@ class ParsedTrace:
     page_errors: list[str] = field(default_factory=list)
     network_failures: list[dict[str, Any]] = field(default_factory=list)
     dom_testids: list[dict[str, str]] = field(default_factory=list)  # 失败前页面所有 data-testid
-    dom_snapshot_excerpt: str | None = None   # 保留兼容
-    screenshots: list[str] = field(default_factory=list)
+    dom_snapshot_found: bool = False  # 是否找到快照（即使 testids 为空也为 True）
+    dom_snapshot_excerpt: str | None = None  # 保留兼容
     assertion_detail: dict[str, str] = field(default_factory=dict)  # AssertionError 的 expected/actual
 
     def to_dict(self) -> dict[str, Any]:
@@ -118,6 +118,24 @@ def _parse_selector(raw: str) -> str:
     return readable
 
 
+def _is_truly_full_snapshot(html: Any) -> bool:
+    """
+    判断 frame-snapshot 的 html 字段是否是真正的完整快照。
+
+    Playwright 存在两种 delta 需要过滤：
+    - 纯 delta：html = [[1, 79]] （html[0] 是整数）
+    - 半 delta：html = ["HTML", {attrs}, [2,33], ...] （根节点真实，但直接子节点是整数引用）
+    """
+    if not isinstance(html, list) or not html:
+        return False
+    if not isinstance(html[0], str):
+        return False
+    for child in html[2:]:
+        if isinstance(child, list) and len(child) >= 1 and isinstance(child[0], int):
+            return False
+    return True
+
+
 def _build_api_name(ev: dict[str, Any]) -> str:
     """从 before 事件的 class + method 构造 api_name（v8 格式）。"""
     cls = ev.get("class", "")
@@ -126,45 +144,6 @@ def _build_api_name(ev: dict[str, Any]) -> str:
     if not cls:
         return ev.get("apiName", "")
     return f"{cls.lower()}.{method}" if method else cls.lower()
-
-
-def _extract_testids(node: Any, results: list | None = None) -> list[dict[str, str]]:
-    """
-    递归从 frame-snapshot HTML 嵌套数组中提取所有 data-testid 元素。
-
-    snapshot 的 html 字段格式：["TAG", {attrs}, child1, child2, ...]
-    """
-    if results is None:
-        results = []
-    if not isinstance(node, list) or len(node) < 2:
-        return results
-
-    tag = node[0] if isinstance(node[0], str) else None
-    attrs = node[1] if isinstance(node[1], dict) else {}
-    children = node[2:] if len(node) > 2 else []
-
-    if tag:
-        testid = attrs.get("data-testid")
-        if testid:
-            text_parts: list[str] = []
-
-            def _collect_text(n: Any) -> None:
-                if isinstance(n, str):
-                    text_parts.append(n)
-                elif isinstance(n, list) and len(n) > 2:
-                    for child in n[2:]:
-                        _collect_text(child)
-
-            for child in children:
-                _collect_text(child)
-            text = "".join(text_parts).strip()[:120]
-            results.append({"tag": tag.lower(), "testid": testid, "text": text})
-
-    for child in children:
-        if isinstance(child, list):
-            _extract_testids(child, results)
-
-    return results
 
 
 def _is_locator_action(api_name: str) -> bool:
@@ -196,16 +175,14 @@ def parse_trace(trace_path: str | Path, context_window: int = 10) -> ParsedTrace
         for candidate in ("trace.network", "0-trace.network"):
             network_events.extend(_read_ndjson(zf, candidate))
 
-        # ── 收集 frame-snapshot（完整快照，不含 delta 引用）────────────────
-        # html 是完整快照时第一个元素是字符串（tag name），
-        # 是 delta 引用时是 [[num, num]] 格式
+        # ── 收集 frame-snapshot（完整快照）────────────────
         full_snapshots: dict[str, dict[str, Any]] = {}
         for ev in trace_events:
             if ev.get("type") == "frame-snapshot":
                 snap = ev.get("snapshot", {})
                 name = snap.get("snapshotName", "")
                 html = snap.get("html", [])
-                if name and isinstance(html, list) and html and isinstance(html[0], str):
+                if name and _is_truly_full_snapshot(html):
                     full_snapshots[name] = snap
 
         # ── 收集 actions（before/after 配对）────────────────────────────
@@ -270,37 +247,6 @@ def parse_trace(trace_path: str | Path, context_window: int = 10) -> ParsedTrace
         else:
             result.actions_before_failure = actions_ordered[-context_window:]
 
-        # ── 推导失败时所在页面 URL ───────────────────────────────────────
-        all_before = result.actions_before_failure + (
-            [result.failed_action] if result.failed_action else []
-        )
-        for a in reversed(all_before):
-            if a.url:
-                result.current_page_url = a.url
-                break
-
-        # ── 提取失败前 DOM 中的 data-testid 元素 ────────────────────────
-        # 策略：找失败 action 的 beforeSnapshot，若是 delta 则向前找最近的完整快照
-        target_snap = None
-        if result.failed_action:
-            snap_name = result.failed_action.before_snapshot
-            if snap_name in full_snapshots:
-                target_snap = full_snapshots[snap_name]
-            else:
-                # delta 引用：向前查找同一 URL 的最近完整快照
-                for a in reversed(all_before):
-                    for candidate_name in (a.after_snapshot, a.before_snapshot):
-                        if candidate_name in full_snapshots:
-                            snap = full_snapshots[candidate_name]
-                            if snap.get("frameUrl") == result.current_page_url or not result.current_page_url:
-                                target_snap = snap
-                                break
-                    if target_snap:
-                        break
-
-        if target_snap:
-            result.dom_testids = _extract_testids(target_snap.get("html", []))
-
         # ── 网络失败（4xx / 5xx）────────────────────────────────────────
         for ev in network_events:
             status = ev.get("status") or (ev.get("response") or {}).get("status")
@@ -310,55 +256,6 @@ def parse_trace(trace_path: str | Path, context_window: int = 10) -> ParsedTrace
                     "status": status,
                     "method": ev.get("method") or (ev.get("request") or {}).get("method"),
                 })
-
-        # ── 截图 ─────────────────────────────────────────────────────────
-        result.screenshots = [
-            n for n in zf.namelist()
-            if n.startswith("resources/") and n.endswith((".jpeg", ".png"))
-        ][:5]
-
-        # ── AssertionError expected/actual 提取 ─────────────────────────
-        # Playwright expect() 断言失败时，error.message 含结构化 diff
-        # pytest 原生 assert 失败时，错误信息出现在 page_errors 或 failed_action.error
-        assertion_sources: list[str] = []
-        if result.failed_action and result.failed_action.error:
-            assertion_sources.append(result.failed_action.error)
-        assertion_sources.extend(result.page_errors)
-        assertion_sources.extend(result.console_errors)
-
-        for src in assertion_sources:
-            if not src:
-                continue
-            detail: dict[str, str] = {}
-            # Playwright expect() 格式：Expected string: "..." / Received string: "..."
-            m_exp = re.search(r'Expected (?:string|value|text)[:\s]+"?([^\n"]+)"?', src, re.IGNORECASE)
-            m_rec = re.search(r'(?:Received|Actual) (?:string|value|text)[:\s]+"?([^\n"]+)"?', src, re.IGNORECASE)
-            if m_exp:
-                detail["expected"] = m_exp.group(1).strip()
-            if m_rec:
-                detail["actual"] = m_rec.group(1).strip()
-
-            # pytest assert 格式：AssertionError: assert 'actual' == 'expected'
-            # 或自定义消息：邮箱不匹配：期望 xxx，实际 yyy
-            if not detail:
-                m_assert = re.search(
-                    r"(?:期望|expected)[^\S\n]*[：:]\s*([^\s,，]+)[^\n]*(?:实际|actual)[^\S\n]*[：:]\s*([^\s\n]+)",
-                    src, re.IGNORECASE
-                )
-                if m_assert:
-                    detail["expected"] = m_assert.group(1).strip()
-                    detail["actual"] = m_assert.group(2).strip()
-
-            # assert a == b 格式：AssertionError: assert 'x' == 'y'
-            if not detail:
-                m_eq = re.search(r"assert\s+'([^']+)'\s*==\s+'([^']+)'", src)
-                if m_eq:
-                    detail["actual"] = m_eq.group(1).strip()
-                    detail["expected"] = m_eq.group(2).strip()
-
-            if detail:
-                result.assertion_detail = detail
-                break
 
     return result
 
@@ -433,32 +330,6 @@ def build_summary(parsed: ParsedTrace, include_dom: bool | None = None,
         for nf in parsed.network_failures[:10]:
             lines.append(f"   · {nf.get('method')} {nf.get('status')} {nf.get('url')}")
 
-    # ── 截图 ─────────────────────────────────────────────────────────────
-    if parsed.screenshots:
-        lines += ["", "📸 [截图（trace 内部路径，最多 5 张）]"]
-        for s in parsed.screenshots:
-            lines.append(f"   · {s}")
-
-    # ── DOM data-testid 元素表（智能模式）────────────────────────────────
-    should_include = (
-        bool(parsed.dom_testids)
-        and (
-            include_dom is True
-            or (
-                include_dom is None
-                and parsed.failed_action is not None
-                and _is_locator_action(parsed.failed_action.api_name)
-            )
-        )
-    )
-
-    if should_include:
-        auto_note = " [自动附加：locator 失败，需 DOM 上下文辅助分类]" if include_dom is None else ""
-        lines += ["", f"🗂  [失败前页面 data-testid 元素表{auto_note}]"]
-        for item in parsed.dom_testids:
-            text_part = f'  →  "{item["text"]}"' if item["text"] else ""
-            lines.append(f'   · <{item["tag"]} data-testid="{item["testid"]}"{text_part}')
-
     return "\n".join(lines)
 
 
@@ -493,4 +364,5 @@ if __name__ == "__main__":
         print(f"✅ 已保存到: {args.out}")
     else:
         print(output)
+
     sys.exit(0)

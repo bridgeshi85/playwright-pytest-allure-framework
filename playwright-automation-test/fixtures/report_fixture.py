@@ -34,7 +34,7 @@ def test_directory(request):
     :param request:
     :return:
     """
-    logger.info("create result folder")
+    logger.debug("create result folder")
     # 确保基础测试结果目录存在
     test_results_dir = Path('output/screenshots')
     test_results_dir.mkdir(parents=True, exist_ok=True)

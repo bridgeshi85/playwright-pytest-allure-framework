@@ -76,7 +76,7 @@ def browser(config):
     browser = getattr(playwright, browser_type).launch(**launch_kwargs)
 
     yield browser
-    logger.info("close the browser")
+    logger.debug("close the browser")
     browser.close()
     playwright.stop()
 
@@ -121,9 +121,9 @@ def page(browser, test_directory, request):
 
     # 获取video并保存路径到request.node，供后续allure报告使用
     if page.video:
-        logger.info("save video path to request.node")
+        logger.debug("save video path to request.node")
         request.node._video_path = page.video.path()
 
-    logger.info("close the page")
+    logger.debug("close the page")
     page.close()
     context.close()

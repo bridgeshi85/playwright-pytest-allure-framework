@@ -46,12 +46,25 @@ def pytest_runtest_makereport(item, call):
     # 将每个阶段的报告存储到 item 上，供 page fixture 判断失败用
     setattr(item, f"rep_{rep.when}", rep)
 
-    # 测试成功时直接返回
-    if rep.when == "call" or rep.passed:
+    # setup 阶段：通过时记录测试开始，其他情况直接返回
+    if rep.when == "setup":
+        if rep.passed:
+            logger.info(f"=== TEST START: {item.name} ===")
+        return
+
+    # teardown 阶段：不做截图（page 已关闭），直接返回
+    if rep.when == "teardown":
+        return
+
+    # 以下仅处理 call 阶段
+    status = "PASSED" if rep.passed else "FAILED"
+    logger.info(f"=== TEST END: {item.name} [{status}] ===")
+
+    if rep.passed:
         logger.info("Test passed, no screenshot or page source need to be saved")
         return
 
-    # 测试失败时执行
+    # call 阶段失败时执行截图
     logger.info("Test failed, capturing screenshot and page source for Allure report")
     # 获取 page fixture
     page = item.funcargs.get("page", None)
@@ -83,10 +96,10 @@ def pytest_runtest_makereport(item, call):
 def pytest_runtest_teardown(item, nextitem):
     yield
     # Attach video to Allure report (if exists)
-    logger.info("Test teardown, checking for video attachment")
+    logger.debug("Test teardown, checking for video attachment")
     video_path = getattr(item, "_video_path", None)
     if video_path and os.path.exists(video_path):
-        logger.info("Save video to Allure report")
+        logger.debug("Save video to Allure report")
         allure.attach.file(
             video_path,
             name="Video",
