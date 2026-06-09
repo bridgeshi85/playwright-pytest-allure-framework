@@ -278,20 +278,6 @@ def build_summary(parsed: ParsedTrace, include_dom: bool | None = None,
     if parsed.current_page_url:
         lines.append(f"🌍 当前页面 URL : {parsed.current_page_url}")
 
-    # ── 失败 action ──────────────────────────────────────────────────────
-    if parsed.failed_action:
-        fa = parsed.failed_action
-        lines += ["", "❌ [失败 ACTION]", f"   api_name  : {fa.api_name}"]
-        if fa.selector:
-            lines.append(f"   selector  : {fa.selector}")
-        if fa.url:
-            lines.append(f"   url       : {fa.url}")
-        lines.append(f"   error     : {fa.error}")
-        if fa.stack_top:
-            lines.append(f"   stack_top : {fa.stack_top}")
-    else:
-        lines += ["", "⚠️  未检测到明确失败 action"]
-
     # ── AssertionError 断言 diff（高置信度分类关键证据）────────────────────
     if parsed.assertion_detail:
         lines += ["", "🔎 [断言差异 (AssertionError)]"]

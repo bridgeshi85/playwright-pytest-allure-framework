@@ -84,8 +84,6 @@ grep -A 50 "TEST START: test_profile_edit_button_not_found" \
     grep -B 0 -m 1 "TEST END: test_profile_edit_button_not_found" -A 0
 ```
 
-或直接读取 test.log 全文，AI 自行定位各用例片段。
-
 ---
 
 ### Step 2：读取摘要 → 参照 `references/triage_rules.md` 分类
