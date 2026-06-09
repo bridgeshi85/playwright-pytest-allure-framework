@@ -103,7 +103,7 @@ def page(browser, test_directory, request):
     # 保存 trace.zip（仅在失败时，以节省磁盘空间；如需每次都保存可去掉条件）
     trace_path = trace_dir / f"{request.node.name}.zip"
     if test_failed:
-        logger.info(f"Test failed – saving trace to {trace_path}")
+        logger.debug(f"Test failed – saving trace to {trace_path}")
         context.tracing.stop(path=str(trace_path))
         request.node._trace_path = str(trace_path)
         # Attach trace to Allure report

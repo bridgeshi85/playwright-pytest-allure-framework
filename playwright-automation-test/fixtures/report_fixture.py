@@ -19,7 +19,7 @@ def save_screenshot(page, test_directory, filename="final-screenshot"):
     """
     screenshot_path = test_directory / f"{filename}.png"
     page.screenshot(path=str(screenshot_path))
-    logger.info(f"Screenshot saved at {screenshot_path}")
+    logger.debug(f"Screenshot saved at {screenshot_path}")
     return screenshot_path
 
 
