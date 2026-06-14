@@ -128,6 +128,14 @@ grep -A 50 "TEST START: test_profile_edit_button_not_found" \
 
 严格遵循 `.claude/skills/triaging-e2e-failures/assets/report_template.md` 模板结构，输出汇总表（每个失败用例一行）。
 
+报告输出完毕后，将报告内容保存为本地 Markdown 文件，路径为项目根目录下：
+
+```
+e2e-failure-triage-report-<YYYY-MM-DD>.md
+```
+
+其中 `<YYYY-MM-DD>` 为当前日期（如 `2026-06-13`）。若同一天已存在同名文件，追加序号后缀（如 `-2`、`-3`）避免覆盖。保存完毕后告知用户完整文件路径。
+
 ---
 
 ### Step 4：自动修复（可选，需用户确认）

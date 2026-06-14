@@ -100,18 +100,9 @@ playwright install chromium
 ```bash
 cd playwright-automation-test
 
-# Run all tests with default environment
-pytest tests/
-
-# Run specific test file
-pytest tests/test_login.py
-
 # Run with specific environment configuration
 pytest tests/ --env=default
 
-# Run with Allure report generation
-pytest tests/ --alluredir=allure-results
-allure serve allure-results
 ```
 
 ### Docker Execution
@@ -196,26 +187,6 @@ The `jenkins/Jenkinsfile` defines a pipeline with:
 - **Docker Isolation**: Containerized execution for consistency
 - **CI/CD Ready**: Jenkins pipeline for automated testing
 
-## 📦 Dependencies
-
-### Python Packages (Test Framework)
-- playwright - Browser automation
-- pytest - Testing framework
-- pytest-playwright - Playwright plugin for pytest
-- allure-pytest - Allure reporting integration
-- pytest-xdist - Parallel test execution
-- pytest-rerunfailures - Retry failed tests
-- loguru - Advanced logging
-- pyyaml - YAML configuration parsing
-- rich - Terminal output formatting
-- requests - HTTP client library
-
-### Frontend Dependencies
-- React 19 - UI library
-- Ant Design - UI components
-- Vite - Build tool
-- React Router DOM - Routing
-
 ## 🔍 Test Development
 
 ### Writing Tests
@@ -241,6 +212,53 @@ def test_login_success(page, config):
 2. Implement page objects in `playwright-automation-test/pages/`
 3. Use fixtures from `conftest.py`
 4. Follow existing naming conventions
+
+## 🤖 AI Skill：E2E 失败根因分析（Triaging E2E Failures）
+
+本项目内置了一个 AI Skill，用于自动分析 Playwright 失败用例的根因，并生成结构化报告。
+
+### 触发方式
+
+在 AI 对话中使用以下任意触发词：
+
+> `分析E2E失败` / `分析trace` / `分析playwright失败` / `生成根因报告` / `请分析测试结果`
+
+### 工作流
+
+| 步骤 | 说明 |
+|------|------|
+| **Step 1 收集** | 自动读取 `output/traces/`、`output/screenshots/`、`output/logs/test.log`，解析 trace + DOM + 日志 |
+| **Step 2 分类** | 参照 `triage_rules.md` 对每个失败用例进行根因分类，输出类别与置信度 |
+| **Step 3 报告** | 按标准模板生成汇总表 + 逐条详情，并自动保存为 `e2e-failure-triage-report-<YYYY-MM-DD>.md` |
+| **Step 4 修复** | 置信度 ≥ 0.7 的 `flaky_test` 类失败可选择自动修复代码 |
+
+### 失败分类体系
+
+| 分类 | 子类 | 说明 |
+|------|------|------|
+| `real_bug` | `api_failure` | 后端接口 4xx/5xx 导致页面无法渲染 |
+| `real_bug` | `assertion_mismatch` | 断言期望值与实际值不符 |
+| `flaky_test` | `selector_renamed` | UI 重构后 testid 已更名，测试代码未同步 |
+| `flaky_test` | `element_missing` | 元素延迟渲染或功能已删除 |
+| `flaky_data` | `data_contamination` | 测试数据污染，前置条件不满足 |
+| `unknown` | — | 证据不足，建议人工使用 `playwright show-trace` 排查 |
+
+### Skill 文件结构
+
+```
+.claude/skills/triaging-e2e-failures/
+├── SKILL.md                        # Skill 主指令（执行流程）
+├── assets/
+│   └── report_template.md          # 报告输出模板
+├── references/
+│   ├── triage_rules.md             # 根因分类规则
+│   └── fix_patterns.md             # 自动修复模式库
+└── scripts/
+    ├── parse_trace.py              # 解析 Playwright trace.zip
+    └── extract_dom.py              # 提取失败瞬间 HTML DOM
+```
+
+---
 
 ## 🤝 Contributing
 
