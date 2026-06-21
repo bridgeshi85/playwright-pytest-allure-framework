@@ -2,18 +2,16 @@ name: Healer Agent
 
 on:
   workflow_run:
-    workflows: ["Tests"]   # 必须与 tests.yml 的 name 完全一致
+    workflows: ["Tests"]
     types: [completed]
 
 permissions:
-  contents: write        # apply_fix 需要 push
-  issues: write          # 创建 GitHub Issue
-  pull-requests: write   # PR comment
+  contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
-  # ────────────────────────────────────────────────
-  # 前置：只在 Tests 失败时继续
-  # ────────────────────────────────────────────────
+  # ── 前置：只在 Tests 失败时继续 ────────────────────────────────────────────
   check:
     name: Check if Tests failed
     runs-on: ubuntu-latest
@@ -27,25 +25,22 @@ jobs:
         run: |
           CONCLUSION="${{ github.event.workflow_run.conclusion }}"
           RUN_ID="${{ github.event.workflow_run.id }}"
-          echo "Tests conclusion: $CONCLUSION"
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+          [ "$CONCLUSION" = "failure" ] && echo "should_heal=true" >> $GITHUB_OUTPUT \
+                                        || echo "should_heal=false" >> $GITHUB_OUTPUT
 
-          if [ "$CONCLUSION" = "failure" ]; then
-            echo "should_heal=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_heal=false" >> $GITHUB_OUTPUT
-          fi
-
-          # 找出触发该 workflow_run 的 PR 编号（如果有）
           PR_NUMBER=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runs/$RUN_ID" \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('pull_requests',[''])[0].get('number','') if d.get('pull_requests') else '')" 2>/dev/null || true)
+            | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+prs=d.get('pull_requests',[])
+print(prs[0]['number'] if prs else '')
+" 2>/dev/null || true)
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
 
-  # ────────────────────────────────────────────────
-  # 核心：Healer Agent
-  # ────────────────────────────────────────────────
+  # ── 核心：Healer Agent ──────────────────────────────────────────────────────
   heal:
     name: Run Healer Agent
     needs: check
@@ -54,8 +49,10 @@ jobs:
     outputs:
       status: ${{ steps.healer.outputs.status }}
       fix_summary: ${{ steps.healer.outputs.fix_summary }}
-      issue_url: ${{ steps.healer.outputs.issue_url }}
       error_category: ${{ steps.healer.outputs.error_category }}
+      confidence: ${{ steps.healer.outputs.confidence }}
+      matched_rule: ${{ steps.healer.outputs.matched_rule }}
+      triage_report: ${{ steps.healer.outputs.triage_report }}
 
     steps:
       - name: Checkout
@@ -68,9 +65,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install healer dependencies
-        run: |
-          pip install anthropic PyGithub pytest-json-report
+      - name: Install dependencies
+        run: pip install anthropic
 
       - name: Download test results artifact
         uses: actions/download-artifact@v4
@@ -79,9 +75,12 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ needs.check.outputs.run_id }}
           path: downloaded-results/
-        continue-on-error: true   # artifact 可能不存在
+        continue-on-error: true
 
-      # ── 运行 Healer Agent ──────────────────────
+      # parse_trace.py / extract_dom.py 需要额外依赖
+      - name: Install skill script dependencies
+        run: pip install zipfile36 beautifulsoup4 lxml 2>/dev/null || true
+
       - name: Run Healer Agent
         id: healer
         env:
@@ -89,7 +88,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          RUN_ID: ${{ needs.check.outputs.run_id }}
         run: |
           python ai/healer/agent.py \
             --test-results downloaded-results/test-results.json \
@@ -97,29 +95,31 @@ jobs:
             --repo "$GITHUB_REPO" \
             --sha "$HEAD_SHA"
 
-          # 把关键字段注入 GITHUB_OUTPUT
           python3 - <<'EOF'
-          import json, os
-          with open("healing-result.json") as f:
-              r = json.load(f)
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write(f"status={r['status']}\n")
-              out.write(f"fix_summary={r.get('fix_summary','')}\n")
-              out.write(f"issue_url={r.get('issue_url','')}\n")
-              out.write(f"error_category={r.get('error_category','unknown')}\n")
-          EOF
+import json, os
+with open("healing-result.json") as f:
+    r = json.load(f)
+with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+    out.write(f"status={r['status']}\n")
+    out.write(f"fix_summary={r.get('fix_summary','')}\n")
+    out.write(f"error_category={r.get('error_category','unknown')}\n")
+    out.write(f"confidence={r.get('confidence',0)}\n")
+    out.write(f"matched_rule={r.get('matched_rule','')}\n")
+    out.write(f"triage_report={r.get('triage_report','')}\n")
+EOF
 
-      - name: Upload healing result
+      - name: Upload healing result & triage report
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: healing-result
-          path: healing-result.json
-          retention-days: 7
+          name: healing-artifacts
+          path: |
+            healing-result.json
+            e2e-failure-triage-report-*.md
+          retention-days: 14
 
-  # ────────────────────────────────────────────────
-  # 路径 A：已自愈 → apply fix → re-run tests
-  # ────────────────────────────────────────────────
+  # ── 路径 A：自愈 → apply fix → re-run ──────────────────────────────────────
+  # 条件：selector_renamed + confidence >= 0.70（与 agent.py SKILL 阈值对齐）
   apply-fix:
     name: Apply Fix & Re-run Tests
     needs: [check, heal]
@@ -134,42 +134,41 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Download healing result
+      - name: Download healing artifacts
         uses: actions/download-artifact@v4
         with:
-          name: healing-result
+          name: healing-artifacts
           path: ./
 
-      - name: Apply fix to source files
+      - name: Apply selector fix
         run: |
           python3 - <<'EOF'
-          import json, os, textwrap
+import json, os
 
-          with open("healing-result.json") as f:
-              result = json.load(f)
+with open("healing-result.json") as f:
+    result = json.load(f)
 
-          fixes = result.get("fixes", [])
-          for fix in fixes:
-              file_path = fix.get("file")
-              old_code  = fix.get("old_code", "")
-              new_code  = fix.get("new_code", "")
-              if file_path and os.path.exists(file_path) and old_code:
-                  with open(file_path, "r") as f:
-                      content = f.read()
-                  content = content.replace(old_code, new_code, 1)
-                  with open(file_path, "w") as f:
-                      f.write(content)
-                  print(f"✅ Fixed: {file_path}")
-              else:
-                  print(f"⚠️  Skipped: {file_path} (not found or no old_code)")
-          EOF
+for fix in result.get("fixes", []):
+    file_path = fix.get("file")
+    old_code  = fix.get("old_code", "")
+    new_code  = fix.get("new_code", "")
+    if file_path and os.path.exists(file_path) and old_code and new_code:
+        content = open(file_path).read()
+        if old_code in content:
+            open(file_path, "w").write(content.replace(old_code, new_code, 1))
+            print(f"✅ Fixed: {file_path}")
+        else:
+            print(f"⚠️  Pattern not found in {file_path}")
+    else:
+        print(f"⚠️  Skipped fix entry: {fix}")
+EOF
 
       - name: Set up Python for re-run
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install test dependencies
         working-directory: playwright-automation-test
         run: |
           pip install -r requirements.txt
@@ -187,18 +186,19 @@ jobs:
             echo "❌ Tests still failing after healing."
           fi
 
-      - name: Commit and push fix (if tests passed)
+      - name: Commit & push fix (only if re-run passed)
         if: steps.rerun.outputs.result == 'passed'
         run: |
           git config user.name  "Healer Agent 🤖"
           git config user.email "healer-agent@github-actions"
           git add -A
-          git diff --cached --quiet || git commit -m "🏥 auto-heal: ${{ needs.heal.outputs.fix_summary }}"
+          git diff --cached --quiet || git commit \
+            -m "🏥 auto-heal(selector_renamed): ${{ needs.heal.outputs.fix_summary }}
+
+Rule: ${{ needs.heal.outputs.matched_rule }} | confidence: ${{ needs.heal.outputs.confidence }}"
           git push
 
-  # ────────────────────────────────────────────────
-  # 路径 B：无法自愈 → 创建 GitHub Issue
-  # ────────────────────────────────────────────────
+  # ── 路径 B：无法自愈 → 创建 GitHub Issue ────────────────────────────────────
   create-issue:
     name: Create GitHub Issue
     needs: [check, heal]
@@ -209,85 +209,97 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download healing result
+      - name: Download healing artifacts
         uses: actions/download-artifact@v4
         with:
-          name: healing-result
+          name: healing-artifacts
           path: ./
 
-      - name: Create issue via API
+      - name: Create issue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python3 - <<'EOF'
-          import json, os, urllib.request, urllib.error
+import json, os, urllib.request
 
-          with open("healing-result.json") as f:
-              result = json.load(f)
+with open("healing-result.json") as f:
+    r = json.load(f)
 
-          repo     = os.environ["GITHUB_REPOSITORY"]
-          token    = os.environ["GITHUB_TOKEN"]
-          category = result.get("error_category", "unknown")
-          run_url  = f"https://github.com/{repo}/actions/runs/${{ needs.check.outputs.run_id }}"
+repo     = os.environ["GITHUB_REPOSITORY"]
+token    = os.environ["GITHUB_TOKEN"]
+cat      = r.get("error_category", "unknown")
+subcat   = r.get("error_sub_category", "")
+conf     = r.get("confidence", 0.0)
+run_url  = f"https://github.com/{repo}/actions/runs/${{ needs.check.outputs.run_id }}"
 
-          # Label 映射
-          label_map = {
-              "assertion_failed":  ["bug", "needs-developer"],
-              "environment_issue": ["bug", "infrastructure"],
-              "flaky_test":        ["flaky", "needs-qe"],
-              "locator_broken":    ["bug", "ui-automation"],
-              "timeout":           ["bug", "performance"],
-          }
-          labels = label_map.get(category, ["bug", "auto-detected"])
+# label 映射 (对齐 triage_rules.md 分类)
+label_map = {
+    "real_bug":   ["bug", "needs-developer"],
+    "flaky_test": ["flaky", "needs-qe"],
+    "flaky_data": ["flaky", "data-issue"],
+    "unknown":    ["bug", "needs-investigation"],
+}
+labels = label_map.get(cat, ["bug", "auto-detected"])
 
-          title = f"🤖 [Healer] {result.get('error_category','Error')} — {result.get('failed_test','Unknown Test')}"
-          body  = f"""## 🏥 Healer Agent 自动诊断报告
+# 报告文件路径
+report_files = [f for f in os.listdir(".") if f.startswith("e2e-failure-triage-report")]
+report_note  = f"\n\n**Triage Report**: `{report_files[0]}`" if report_files else ""
 
-          **触发 Workflow Run**: [{run_url}]({run_url})
-          **Commit**: `${{ github.event.workflow_run.head_sha[:8] }}`
+title = f"🤖 [Healer] {cat}/{subcat} — {r.get('failed_test','Unknown Test')}"
+body  = f"""## 🏥 Healer Agent 自动诊断报告
 
-          ---
+**Workflow Run**: [{run_url}]({run_url})  
+**Commit**: `${{ github.event.workflow_run.head_sha }}`{report_note}
 
-          ### 错误分类
-          `{category}`
+---
 
-          ### 根因分析
-          {result.get('root_cause', 'N/A')}
+### 分类结果
+| 项目 | 值 |
+|------|----|
+| 分类 | `{cat}/{subcat}` |
+| 命中规则 | `{r.get('matched_rule','')}` |
+| 置信度 | {conf:.2f} |
 
-          ### 错误详情
-          ```
-          {result.get('error_message', 'N/A')}
-          ```
+### 根因分析
+{r.get('root_cause', 'N/A')}
 
-          ### 为什么无法自愈
-          {result.get('reason_not_healable', 'N/A')}
+### 关键证据
+{chr(10).join(f'- `{e}`' for e in r.get('key_evidence', []))}
 
-          ### 建议
-          {result.get('recommendation', 'N/A')}
+### 为什么无法自愈
+{r.get('reason_not_healable', 'N/A')}
 
-          ---
-          > 🤖 此 Issue 由 Healer Agent 自动创建，置信度不足以自动修复，需要人工介入。
-          """
+### 修复方向
+{r.get('recommended_fix', 'N/A')}
 
-          payload = json.dumps({"title": title, "body": body, "labels": labels}).encode()
-          req = urllib.request.Request(
-              f"https://api.github.com/repos/{repo}/issues",
-              data=payload,
-              headers={
-                  "Authorization": f"Bearer {token}",
-                  "Accept": "application/vnd.github+json",
-                  "Content-Type": "application/json",
-              },
-              method="POST"
-          )
-          with urllib.request.urlopen(req) as resp:
-              issue = json.loads(resp.read())
-              print(f"✅ Issue created: {issue['html_url']}")
-          EOF
+---
+> 🤖 此 Issue 由 Healer Agent 自动创建。对齐 `.claude/skills/triaging-e2e-failures` Skill 规则。
+"""
 
-  # ────────────────────────────────────────────────
-  # 最终：PR Comment（两条路径都输出报告）
-  # ────────────────────────────────────────────────
+payload = json.dumps({"title": title, "body": body, "labels": labels}).encode()
+req = urllib.request.Request(
+    f"https://api.github.com/repos/{repo}/issues",
+    data=payload,
+    headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+    },
+    method="POST"
+)
+with urllib.request.urlopen(req) as resp:
+    issue = json.loads(resp.read())
+    print(f"✅ Issue created: {issue['html_url']}")
+
+    # 回写 issue_url 到 healing-result.json
+    with open("healing-result.json") as f:
+        result = json.load(f)
+    result["issue_url"] = issue["html_url"]
+    with open("healing-result.json", "w") as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
+EOF
+
+  # ── PR Comment：两条路径都输出 Healer Report ────────────────────────────────
   report:
     name: PR Comment — Healer Report
     needs: [check, heal, apply-fix, create-issue]
@@ -298,10 +310,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download healing result
+      - name: Download healing artifacts
         uses: actions/download-artifact@v4
         with:
-          name: healing-result
+          name: healing-artifacts
           path: ./
         continue-on-error: true
 
@@ -310,55 +322,46 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs   = require('fs');
-            const prNum = parseInt('${{ needs.check.outputs.pr_number }}');
-            if (!prNum) { console.log('No PR, skip comment'); return; }
+            const fs     = require('fs');
+            const prNum  = parseInt('${{ needs.check.outputs.pr_number }}');
+            if (!prNum) { console.log('No PR, skip'); return; }
 
-            let healing = {};
-            try { healing = JSON.parse(fs.readFileSync('healing-result.json', 'utf8')); } catch {}
+            let r = {};
+            try { r = JSON.parse(fs.readFileSync('healing-result.json', 'utf8')); } catch {}
 
-            const status       = healing.status || 'unknown';
-            const fixSummary   = healing.fix_summary || '';
-            const issueUrl     = healing.issue_url || '';
-            const errorCat     = healing.error_category || 'unknown';
-            const rootCause    = healing.root_cause || 'N/A';
-            const confidence   = healing.confidence != null ? (healing.confidence * 100).toFixed(0) + '%' : 'N/A';
-            const rerunResult  = '${{ needs.apply-fix.outputs.rerun_result }}';
-            const runUrl       = `https://github.com/${{ github.repository }}/actions/runs/${{ needs.check.outputs.run_id }}`;
+            const status      = r.status || 'unknown';
+            const cat         = r.error_category || 'unknown';
+            const subcat      = r.error_sub_category || '';
+            const conf        = r.confidence != null ? (r.confidence * 100).toFixed(0) + '%' : 'N/A';
+            const rule        = r.matched_rule || 'N/A';
+            const fixSummary  = r.fix_summary || '';
+            const rootCause   = r.root_cause || 'N/A';
+            const issueUrl    = r.issue_url || '';
+            const rerunResult = '${{ needs.apply-fix.outputs.rerun_result }}';
+            const runUrl      = `https://github.com/${{ github.repository }}/actions/runs/${{ needs.check.outputs.run_id }}`;
+            const reportFile  = r.triage_report || '';
 
-            let statusBadge, body;
+            // 报告文件列表
+            let reportNote = '';
+            try {
+              const files = fs.readdirSync('.').filter(f => f.startsWith('e2e-failure-triage-report'));
+              if (files.length) reportNote = `\n\n📄 **Triage Report**: \`${files[0]}\` (attached in artifacts)`;
+            } catch {}
 
+            let badge, rows;
             if (status === 'healed' && rerunResult === 'passed') {
-              statusBadge = '✅ **Auto-Healed & Verified**';
-              body = `## 🏥 Healer Agent Report\n\n${statusBadge}\n\n` +
-                     `| 项目 | 详情 |\n|---|---|\n` +
-                     `| 错误分类 | \`${errorCat}\` |\n` +
-                     `| 修复摘要 | ${fixSummary} |\n` +
-                     `| 置信度 | ${confidence} |\n` +
-                     `| 验证结果 | ✅ Re-run Passed |\n` +
-                     `| Workflow Run | [查看详情](${runUrl}) |\n\n` +
-                     `> 🤖 修复已自动 commit，无需人工介入。`;
+              badge = '✅ **Auto-Healed & Verified**';
+              rows  = `| 分类 | \`${cat}/${subcat}\` |\n| 命中规则 | \`${rule}\` |\n| 置信度 | ${conf} |\n| 修复内容 | ${fixSummary} |\n| 验证结果 | ✅ Re-run Passed |`;
             } else if (status === 'healed' && rerunResult === 'failed') {
-              statusBadge = '⚠️ **Auto-Healed but Re-run Failed**';
-              body = `## 🏥 Healer Agent Report\n\n${statusBadge}\n\n` +
-                     `| 项目 | 详情 |\n|---|---|\n` +
-                     `| 错误分类 | \`${errorCat}\` |\n` +
-                     `| 修复摘要 | ${fixSummary} |\n` +
-                     `| 置信度 | ${confidence} |\n` +
-                     `| 验证结果 | ❌ Re-run Still Failed |\n` +
-                     `| Workflow Run | [查看详情](${runUrl}) |\n\n` +
-                     `> ⚠️ 修复尝试后仍然失败，建议人工排查。`;
+              badge = '⚠️ **Heal Attempted — Re-run Still Failed**';
+              rows  = `| 分类 | \`${cat}/${subcat}\` |\n| 命中规则 | \`${rule}\` |\n| 置信度 | ${conf} |\n| 修复内容 | ${fixSummary} |\n| 验证结果 | ❌ Re-run Failed |`;
             } else {
-              statusBadge = '❌ **Needs Manual Intervention**';
-              body = `## 🏥 Healer Agent Report\n\n${statusBadge}\n\n` +
-                     `| 项目 | 详情 |\n|---|---|\n` +
-                     `| 错误分类 | \`${errorCat}\` |\n` +
-                     `| 根因分析 | ${rootCause} |\n` +
-                     `| 置信度 | ${confidence} |\n` +
-                     (issueUrl ? `| GitHub Issue | [查看 Issue](${issueUrl}) |\n` : '') +
-                     `| Workflow Run | [查看详情](${runUrl}) |\n\n` +
-                     `> 🤖 无法自动修复，已创建 Issue 等待人工处理。`;
+              badge = '❌ **Needs Manual Intervention**';
+              rows  = `| 分类 | \`${cat}/${subcat}\` |\n| 命中规则 | \`${rule}\` |\n| 置信度 | ${conf} |\n| 根因 | ${rootCause} |`
+                    + (issueUrl ? `\n| GitHub Issue | [查看 Issue](${issueUrl}) |` : '');
             }
+
+            const body = `## 🏥 Healer Agent Report\n\n${badge}\n\n| 项目 | 详情 |\n|---|---|\n${rows}\n| Workflow Run | [查看详情](${runUrl}) |${reportNote}\n\n> 对齐 \`.claude/skills/triaging-e2e-failures\` Skill 规则`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
