@@ -213,49 +213,49 @@ def test_login_success(page, config):
 3. Use fixtures from `conftest.py`
 4. Follow existing naming conventions
 
-## 🤖 AI Skill：E2E 失败根因分析（Triaging E2E Failures）
+## 🤖 AI Skill: E2E Failure Root Cause Analysis (Triaging E2E Failures)
 
-本项目内置了一个 AI Skill，用于自动分析 Playwright 失败用例的根因，并生成结构化报告。
+This project includes a built-in AI Skill that automatically analyzes failed Playwright test cases, identifies root causes, and generates structured triage reports.
 
-### 触发方式
+### Trigger Phrases
 
-在 AI 对话中使用以下任意触发词：
+Use any of the following phrases in your AI conversation to activate the skill:
 
-> `分析E2E失败` / `分析trace` / `分析playwright失败` / `生成根因报告` / `请分析测试结果`
+> `analyze E2E failure` / `analyze trace` / `analyze playwright failure` / `generate root cause report` / `triage test results`
 
-### 工作流
+### Workflow
 
-| 步骤 | 说明 |
-|------|------|
-| **Step 1 收集** | 自动读取 `output/traces/`、`output/screenshots/`、`output/logs/test.log`，解析 trace + DOM + 日志 |
-| **Step 2 分类** | 参照 `triage_rules.md` 对每个失败用例进行根因分类，输出类别与置信度 |
-| **Step 3 报告** | 按标准模板生成汇总表 + 逐条详情，并自动保存为 `e2e-failure-triage-report-<YYYY-MM-DD>.md` |
-| **Step 4 修复** | 置信度 ≥ 0.7 的 `flaky_test` 类失败可选择自动修复代码 |
+| Step | Description |
+|------|-------------|
+| **Step 1 — Collect** | Automatically reads `output/traces/`, `output/screenshots/`, and `output/logs/test.log`; parses trace, DOM snapshots, and logs |
+| **Step 2 — Classify** | Applies rules from `triage_rules.md` to classify each failure by root cause category and confidence score |
+| **Step 3 — Report** | Generates a summary table and per-failure details using the standard template; auto-saves as `e2e-failure-triage-report-<YYYY-MM-DD>.md` |
+| **Step 4 — Fix** | For `flaky_test` failures with confidence ≥ 0.7, optionally generates an automated code fix |
 
-### 失败分类体系
+### Failure Classification System
 
-| 分类 | 子类 | 说明 |
-|------|------|------|
-| `real_bug` | `api_failure` | 后端接口 4xx/5xx 导致页面无法渲染 |
-| `real_bug` | `assertion_mismatch` | 断言期望值与实际值不符 |
-| `flaky_test` | `selector_renamed` | UI 重构后 testid 已更名，测试代码未同步 |
-| `flaky_test` | `element_missing` | 元素延迟渲染或功能已删除 |
-| `flaky_data` | `data_contamination` | 测试数据污染，前置条件不满足 |
-| `unknown` | — | 证据不足，建议人工使用 `playwright show-trace` 排查 |
+| Category | Sub-type | Description |
+|----------|----------|-------------|
+| `real_bug` | `api_failure` | Backend API returned 4xx/5xx, causing page render failure |
+| `real_bug` | `assertion_mismatch` | Assertion expected value does not match actual value |
+| `flaky_test` | `selector_renamed` | UI refactor changed a test ID but test code was not updated |
+| `flaky_test` | `element_missing` | Element renders late or the feature has been removed |
+| `flaky_data` | `data_contamination` | Test data polluted; preconditions not satisfied |
+| `unknown` | — | Insufficient evidence; recommend manual inspection via `playwright show-trace` |
 
-### Skill 文件结构
+### Skill File Structure
 
 ```
 .claude/skills/triaging-e2e-failures/
-├── SKILL.md                        # Skill 主指令（执行流程）
+├── SKILL.md                        # Skill main instruction (execution flow)
 ├── assets/
-│   └── report_template.md          # 报告输出模板
+│   └── report_template.md          # Report output template
 ├── references/
-│   ├── triage_rules.md             # 根因分类规则
-│   └── fix_patterns.md             # 自动修复模式库
+│   ├── triage_rules.md             # Root cause classification rules
+│   └── fix_patterns.md             # Automated fix pattern library
 └── scripts/
-    ├── parse_trace.py              # 解析 Playwright trace.zip
-    └── extract_dom.py              # 提取失败瞬间 HTML DOM
+    ├── parse_trace.py              # Parse Playwright trace.zip
+    └── extract_dom.py              # Extract HTML DOM at point of failure
 ```
 
 ---
