@@ -1,0 +1,369 @@
+name: Healer Agent
+
+on:
+  workflow_run:
+    workflows: ["Tests"]   # 必须与 tests.yml 的 name 完全一致
+    types: [completed]
+
+permissions:
+  contents: write        # apply_fix 需要 push
+  issues: write          # 创建 GitHub Issue
+  pull-requests: write   # PR comment
+
+jobs:
+  # ────────────────────────────────────────────────
+  # 前置：只在 Tests 失败时继续
+  # ────────────────────────────────────────────────
+  check:
+    name: Check if Tests failed
+    runs-on: ubuntu-latest
+    outputs:
+      should_heal: ${{ steps.check.outputs.should_heal }}
+      run_id: ${{ steps.check.outputs.run_id }}
+      pr_number: ${{ steps.check.outputs.pr_number }}
+    steps:
+      - name: Evaluate trigger
+        id: check
+        run: |
+          CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          echo "Tests conclusion: $CONCLUSION"
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+
+          if [ "$CONCLUSION" = "failure" ]; then
+            echo "should_heal=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_heal=false" >> $GITHUB_OUTPUT
+          fi
+
+          # 找出触发该 workflow_run 的 PR 编号（如果有）
+          PR_NUMBER=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/$RUN_ID" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('pull_requests',[''])[0].get('number','') if d.get('pull_requests') else '')" 2>/dev/null || true)
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+  # ────────────────────────────────────────────────
+  # 核心：Healer Agent
+  # ────────────────────────────────────────────────
+  heal:
+    name: Run Healer Agent
+    needs: check
+    if: needs.check.outputs.should_heal == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.healer.outputs.status }}
+      fix_summary: ${{ steps.healer.outputs.fix_summary }}
+      issue_url: ${{ steps.healer.outputs.issue_url }}
+      error_category: ${{ steps.healer.outputs.error_category }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install healer dependencies
+        run: |
+          pip install anthropic PyGithub pytest-json-report
+
+      - name: Download test results artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: test-results
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ needs.check.outputs.run_id }}
+          path: downloaded-results/
+        continue-on-error: true   # artifact 可能不存在
+
+      # ── 运行 Healer Agent ──────────────────────
+      - name: Run Healer Agent
+        id: healer
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ needs.check.outputs.run_id }}
+        run: |
+          python ai/healer/agent.py \
+            --test-results downloaded-results/test-results.json \
+            --output healing-result.json \
+            --repo "$GITHUB_REPO" \
+            --sha "$HEAD_SHA"
+
+          # 把关键字段注入 GITHUB_OUTPUT
+          python3 - <<'EOF'
+          import json, os
+          with open("healing-result.json") as f:
+              r = json.load(f)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"status={r['status']}\n")
+              out.write(f"fix_summary={r.get('fix_summary','')}\n")
+              out.write(f"issue_url={r.get('issue_url','')}\n")
+              out.write(f"error_category={r.get('error_category','unknown')}\n")
+          EOF
+
+      - name: Upload healing result
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: healing-result
+          path: healing-result.json
+          retention-days: 7
+
+  # ────────────────────────────────────────────────
+  # 路径 A：已自愈 → apply fix → re-run tests
+  # ────────────────────────────────────────────────
+  apply-fix:
+    name: Apply Fix & Re-run Tests
+    needs: [check, heal]
+    if: needs.heal.outputs.status == 'healed'
+    runs-on: ubuntu-latest
+    outputs:
+      rerun_result: ${{ steps.rerun.outputs.result }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Download healing result
+        uses: actions/download-artifact@v4
+        with:
+          name: healing-result
+          path: ./
+
+      - name: Apply fix to source files
+        run: |
+          python3 - <<'EOF'
+          import json, os, textwrap
+
+          with open("healing-result.json") as f:
+              result = json.load(f)
+
+          fixes = result.get("fixes", [])
+          for fix in fixes:
+              file_path = fix.get("file")
+              old_code  = fix.get("old_code", "")
+              new_code  = fix.get("new_code", "")
+              if file_path and os.path.exists(file_path) and old_code:
+                  with open(file_path, "r") as f:
+                      content = f.read()
+                  content = content.replace(old_code, new_code, 1)
+                  with open(file_path, "w") as f:
+                      f.write(content)
+                  print(f"✅ Fixed: {file_path}")
+              else:
+                  print(f"⚠️  Skipped: {file_path} (not found or no old_code)")
+          EOF
+
+      - name: Set up Python for re-run
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: playwright-automation-test
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: Re-run tests to verify fix
+        id: rerun
+        working-directory: playwright-automation-test
+        run: |
+          if pytest tests/ -v --tb=short; then
+            echo "result=passed" >> $GITHUB_OUTPUT
+            echo "✅ Tests passed after healing!"
+          else
+            echo "result=failed" >> $GITHUB_OUTPUT
+            echo "❌ Tests still failing after healing."
+          fi
+
+      - name: Commit and push fix (if tests passed)
+        if: steps.rerun.outputs.result == 'passed'
+        run: |
+          git config user.name  "Healer Agent 🤖"
+          git config user.email "healer-agent@github-actions"
+          git add -A
+          git diff --cached --quiet || git commit -m "🏥 auto-heal: ${{ needs.heal.outputs.fix_summary }}"
+          git push
+
+  # ────────────────────────────────────────────────
+  # 路径 B：无法自愈 → 创建 GitHub Issue
+  # ────────────────────────────────────────────────
+  create-issue:
+    name: Create GitHub Issue
+    needs: [check, heal]
+    if: needs.heal.outputs.status != 'healed'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download healing result
+        uses: actions/download-artifact@v4
+        with:
+          name: healing-result
+          path: ./
+
+      - name: Create issue via API
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, urllib.request, urllib.error
+
+          with open("healing-result.json") as f:
+              result = json.load(f)
+
+          repo     = os.environ["GITHUB_REPOSITORY"]
+          token    = os.environ["GITHUB_TOKEN"]
+          category = result.get("error_category", "unknown")
+          run_url  = f"https://github.com/{repo}/actions/runs/${{ needs.check.outputs.run_id }}"
+
+          # Label 映射
+          label_map = {
+              "assertion_failed":  ["bug", "needs-developer"],
+              "environment_issue": ["bug", "infrastructure"],
+              "flaky_test":        ["flaky", "needs-qe"],
+              "locator_broken":    ["bug", "ui-automation"],
+              "timeout":           ["bug", "performance"],
+          }
+          labels = label_map.get(category, ["bug", "auto-detected"])
+
+          title = f"🤖 [Healer] {result.get('error_category','Error')} — {result.get('failed_test','Unknown Test')}"
+          body  = f"""## 🏥 Healer Agent 自动诊断报告
+
+          **触发 Workflow Run**: [{run_url}]({run_url})
+          **Commit**: `${{ github.event.workflow_run.head_sha[:8] }}`
+
+          ---
+
+          ### 错误分类
+          `{category}`
+
+          ### 根因分析
+          {result.get('root_cause', 'N/A')}
+
+          ### 错误详情
+          ```
+          {result.get('error_message', 'N/A')}
+          ```
+
+          ### 为什么无法自愈
+          {result.get('reason_not_healable', 'N/A')}
+
+          ### 建议
+          {result.get('recommendation', 'N/A')}
+
+          ---
+          > 🤖 此 Issue 由 Healer Agent 自动创建，置信度不足以自动修复，需要人工介入。
+          """
+
+          payload = json.dumps({"title": title, "body": body, "labels": labels}).encode()
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/issues",
+              data=payload,
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "Content-Type": "application/json",
+              },
+              method="POST"
+          )
+          with urllib.request.urlopen(req) as resp:
+              issue = json.loads(resp.read())
+              print(f"✅ Issue created: {issue['html_url']}")
+          EOF
+
+  # ────────────────────────────────────────────────
+  # 最终：PR Comment（两条路径都输出报告）
+  # ────────────────────────────────────────────────
+  report:
+    name: PR Comment — Healer Report
+    needs: [check, heal, apply-fix, create-issue]
+    if: |
+      always() &&
+      needs.heal.result != 'skipped' &&
+      needs.check.outputs.pr_number != ''
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download healing result
+        uses: actions/download-artifact@v4
+        with:
+          name: healing-result
+          path: ./
+        continue-on-error: true
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs   = require('fs');
+            const prNum = parseInt('${{ needs.check.outputs.pr_number }}');
+            if (!prNum) { console.log('No PR, skip comment'); return; }
+
+            let healing = {};
+            try { healing = JSON.parse(fs.readFileSync('healing-result.json', 'utf8')); } catch {}
+
+            const status       = healing.status || 'unknown';
+            const fixSummary   = healing.fix_summary || '';
+            const issueUrl     = healing.issue_url || '';
+            const errorCat     = healing.error_category || 'unknown';
+            const rootCause    = healing.root_cause || 'N/A';
+            const confidence   = healing.confidence != null ? (healing.confidence * 100).toFixed(0) + '%' : 'N/A';
+            const rerunResult  = '${{ needs.apply-fix.outputs.rerun_result }}';
+            const runUrl       = `https://github.com/${{ github.repository }}/actions/runs/${{ needs.check.outputs.run_id }}`;
+
+            let statusBadge, body;
+
+            if (status === 'healed' && rerunResult === 'passed') {
+              statusBadge = '✅ **Auto-Healed & Verified**';
+              body = `## 🏥 Healer Agent Report\n\n${statusBadge}\n\n` +
+                     `| 项目 | 详情 |\n|---|---|\n` +
+                     `| 错误分类 | \`${errorCat}\` |\n` +
+                     `| 修复摘要 | ${fixSummary} |\n` +
+                     `| 置信度 | ${confidence} |\n` +
+                     `| 验证结果 | ✅ Re-run Passed |\n` +
+                     `| Workflow Run | [查看详情](${runUrl}) |\n\n` +
+                     `> 🤖 修复已自动 commit，无需人工介入。`;
+            } else if (status === 'healed' && rerunResult === 'failed') {
+              statusBadge = '⚠️ **Auto-Healed but Re-run Failed**';
+              body = `## 🏥 Healer Agent Report\n\n${statusBadge}\n\n` +
+                     `| 项目 | 详情 |\n|---|---|\n` +
+                     `| 错误分类 | \`${errorCat}\` |\n` +
+                     `| 修复摘要 | ${fixSummary} |\n` +
+                     `| 置信度 | ${confidence} |\n` +
+                     `| 验证结果 | ❌ Re-run Still Failed |\n` +
+                     `| Workflow Run | [查看详情](${runUrl}) |\n\n` +
+                     `> ⚠️ 修复尝试后仍然失败，建议人工排查。`;
+            } else {
+              statusBadge = '❌ **Needs Manual Intervention**';
+              body = `## 🏥 Healer Agent Report\n\n${statusBadge}\n\n` +
+                     `| 项目 | 详情 |\n|---|---|\n` +
+                     `| 错误分类 | \`${errorCat}\` |\n` +
+                     `| 根因分析 | ${rootCause} |\n` +
+                     `| 置信度 | ${confidence} |\n` +
+                     (issueUrl ? `| GitHub Issue | [查看 Issue](${issueUrl}) |\n` : '') +
+                     `| Workflow Run | [查看详情](${runUrl}) |\n\n` +
+                     `> 🤖 无法自动修复，已创建 Issue 等待人工处理。`;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: prNum,
+              body
+            });
+            console.log('✅ PR comment posted');
