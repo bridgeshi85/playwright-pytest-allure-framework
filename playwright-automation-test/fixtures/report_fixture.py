@@ -19,7 +19,7 @@ def save_screenshot(page, test_directory, filename="final-screenshot"):
     """
     screenshot_path = test_directory / f"{filename}.png"
     page.screenshot(path=str(screenshot_path))
-    logger.info(f"Screenshot saved at {screenshot_path}")
+    logger.debug(f"Screenshot saved at {screenshot_path}")
     return screenshot_path
 
 
@@ -34,7 +34,7 @@ def test_directory(request):
     :param request:
     :return:
     """
-    logger.info("create result folder")
+    logger.debug("create result folder")
     # 确保基础测试结果目录存在
     test_results_dir = Path('output/screenshots')
     test_results_dir.mkdir(parents=True, exist_ok=True)

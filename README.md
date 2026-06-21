@@ -100,18 +100,9 @@ playwright install chromium
 ```bash
 cd playwright-automation-test
 
-# Run all tests with default environment
-pytest tests/
-
-# Run specific test file
-pytest tests/test_login.py
-
 # Run with specific environment configuration
 pytest tests/ --env=default
 
-# Run with Allure report generation
-pytest tests/ --alluredir=allure-results
-allure serve allure-results
 ```
 
 ### Docker Execution
@@ -196,26 +187,6 @@ The `jenkins/Jenkinsfile` defines a pipeline with:
 - **Docker Isolation**: Containerized execution for consistency
 - **CI/CD Ready**: Jenkins pipeline for automated testing
 
-## 📦 Dependencies
-
-### Python Packages (Test Framework)
-- playwright - Browser automation
-- pytest - Testing framework
-- pytest-playwright - Playwright plugin for pytest
-- allure-pytest - Allure reporting integration
-- pytest-xdist - Parallel test execution
-- pytest-rerunfailures - Retry failed tests
-- loguru - Advanced logging
-- pyyaml - YAML configuration parsing
-- rich - Terminal output formatting
-- requests - HTTP client library
-
-### Frontend Dependencies
-- React 19 - UI library
-- Ant Design - UI components
-- Vite - Build tool
-- React Router DOM - Routing
-
 ## 🔍 Test Development
 
 ### Writing Tests
@@ -241,6 +212,53 @@ def test_login_success(page, config):
 2. Implement page objects in `playwright-automation-test/pages/`
 3. Use fixtures from `conftest.py`
 4. Follow existing naming conventions
+
+## 🤖 AI Skill: E2E Failure Root Cause Analysis (Triaging E2E Failures)
+
+This project includes a built-in AI Skill that automatically analyzes failed Playwright test cases, identifies root causes, and generates structured triage reports.
+
+### Trigger Phrases
+
+Use any of the following phrases in your AI conversation to activate the skill:
+
+> `analyze E2E failure` / `analyze trace` / `analyze playwright failure` / `generate root cause report` / `triage test results`
+
+### Workflow
+
+| Step | Description |
+|------|-------------|
+| **Step 1 — Collect** | Automatically reads `output/traces/`, `output/screenshots/`, and `output/logs/test.log`; parses trace, DOM snapshots, and logs |
+| **Step 2 — Classify** | Applies rules from `triage_rules.md` to classify each failure by root cause category and confidence score |
+| **Step 3 — Report** | Generates a summary table and per-failure details using the standard template; auto-saves as `e2e-failure-triage-report-<YYYY-MM-DD>.md` |
+| **Step 4 — Fix** | For `flaky_test` failures with confidence ≥ 0.7, optionally generates an automated code fix |
+
+### Failure Classification System
+
+| Category | Sub-type | Description |
+|----------|----------|-------------|
+| `real_bug` | `api_failure` | Backend API returned 4xx/5xx, causing page render failure |
+| `real_bug` | `assertion_mismatch` | Assertion expected value does not match actual value |
+| `flaky_test` | `selector_renamed` | UI refactor changed a test ID but test code was not updated |
+| `flaky_test` | `element_missing` | Element renders late or the feature has been removed |
+| `flaky_data` | `data_contamination` | Test data polluted; preconditions not satisfied |
+| `unknown` | — | Insufficient evidence; recommend manual inspection via `playwright show-trace` |
+
+### Skill File Structure
+
+```
+.claude/skills/triaging-e2e-failures/
+├── SKILL.md                        # Skill main instruction (execution flow)
+├── assets/
+│   └── report_template.md          # Report output template
+├── references/
+│   ├── triage_rules.md             # Root cause classification rules
+│   └── fix_patterns.md             # Automated fix pattern library
+└── scripts/
+    ├── parse_trace.py              # Parse Playwright trace.zip
+    └── extract_dom.py              # Extract HTML DOM at point of failure
+```
+
+---
 
 ## 🤝 Contributing
 
