@@ -1,0 +1,79 @@
+{
+  "version": "1.0",
+  "error_categories": [
+    {
+      "id": "locator_broken",
+      "name": "Locator 失效",
+      "patterns": [
+        "element not found",
+        "no matching element",
+        "selector did not match",
+        "locator.click",
+        "strict mode violation"
+      ],
+      "severity": "high",
+      "healable": true,
+      "healing_rules": ["try_alternative_locator", "add_explicit_wait"]
+    },
+    {
+      "id": "timeout",
+      "name": "超时问题",
+      "patterns": [
+        "timeout",
+        "waiting for",
+        "deadline exceeded",
+        "Timeout",
+        "TimeoutError"
+      ],
+      "severity": "medium",
+      "healable": true,
+      "healing_rules": ["increase_timeout", "add_wait_for_visibility"]
+    },
+    {
+      "id": "assertion_failed",
+      "name": "断言失败",
+      "patterns": [
+        "AssertionError",
+        "assert ",
+        "expected",
+        "but found",
+        "Expected",
+        "to equal",
+        "to contain"
+      ],
+      "severity": "medium",
+      "healable": false,
+      "reason": "断言失败通常表示业务逻辑问题，需要开发者介入",
+      "action": "create_issue"
+    },
+    {
+      "id": "environment_issue",
+      "name": "环境问题",
+      "patterns": [
+        "connection refused",
+        "network error",
+        "502",
+        "503",
+        "ECONNREFUSED",
+        "ERR_CONNECTION"
+      ],
+      "severity": "low",
+      "healable": false,
+      "reason": "环境问题需要 DevOps 介入",
+      "action": "create_issue_with_label:infrastructure"
+    },
+    {
+      "id": "flaky_test",
+      "name": "不稳定测试",
+      "patterns": [
+        "flaky",
+        "intermittent",
+        "random failure",
+        "sometimes fails"
+      ],
+      "severity": "medium",
+      "healable": true,
+      "healing_rules": ["add_retry_logic", "increase_wait_time"]
+    }
+  ]
+}
