@@ -83,8 +83,8 @@ CSS 组合额外约束：
 
 | 占位符 | 来源 |
 |--------|------|
-| `{{config.base_url}}` | `configs/env.yaml` |
-| `{{config.user.username}}` | `configs/env.yaml` 中的用户凭据 |
+| `{{config.base_url}}` | `configs/env.{env}.yaml` |
+| `{{config.user.username}}` | `configs/env.{env}.yaml` 中的用户凭据 |
 | `{{data.field}}` | `data/{feature}/{file}.json` 参数化数据 |
 
 ---
@@ -110,105 +110,105 @@ mkdir -p specs/
 ```yaml
 # 由 playwright-test-planner 自动生成
 meta:
- feature: "login"
- allure_feature: "User Authentication"
- generated_by: "playwright-test-planner"
- base_url: "http://localhost:5173"
+  feature: "login"
+  allure_feature: "User Authentication"
+  generated_by: "playwright-test-planner"
+  base_url: "http://localhost:5173"
 
 pages:
- - class_name: LoginPage
- file_path: pages/login_page.py
- url_path: /login
- elements:
- - name: username_input
- locator_strategy: get_by_test_id # 优先级1：有 data-testid
- locator_value: "input-username"
- note: "用户名输入框"
- - name: password_input
- locator_strategy: get_by_test_id
- locator_value: "input-password"
- note: "密码输入框"
- - name: submit_button
- locator_strategy: get_by_test_id
- locator_value: "btn-login"
- note: "登录按钮"
- - name: error_message
- locator_strategy: css_combo
- locator_value: "[role='alert'].login-error"
- note: "登录失败错误提示"
- post_action: true
- needs_testid: true
+  - class_name: LoginPage
+    file_path: pages/login_page.py
+    url_path: /login
+    elements:
+      - name: username_input
+        locator_strategy: get_by_test_id
+        locator_value: "input-username"
+        note: "用户名输入框"
+      - name: password_input
+        locator_strategy: get_by_test_id
+        locator_value: "input-password"
+        note: "密码输入框"
+      - name: submit_button
+        locator_strategy: get_by_test_id
+        locator_value: "btn-login"
+        note: "登录按钮"
+      - name: error_message
+        locator_strategy: css_combo
+        locator_value: "[role='alert'].login-error"
+        note: "登录失败错误提示"
+        post_action: true
+        needs_testid: true
 
- - class_name: DashboardPage
- file_path: pages/dashboard_page.py
- url_path: /dashboard
- post_navigation: true
- elements:
- - name: welcome_heading
- locator_strategy: get_by_test_id
- locator_value: "dashboard-welcome"
- note: "欢迎标题"
- post_action: true
+  - class_name: DashboardPage
+    file_path: pages/dashboard_page.py
+    url_path: /dashboard
+    post_navigation: true
+    elements:
+      - name: welcome_heading
+        locator_strategy: get_by_test_id
+        locator_value: "dashboard-welcome"
+        note: "欢迎标题"
+        post_action: true
 
 scenarios:
- - id: TC_LOGIN_001
- story: "Valid login"
- title: "使用有效凭据登录成功"
- type: positive
- actions:
- - step: 1
- action: navigate
- target_page: LoginPage
- - step: 2
- action: fill
- page: LoginPage
- element: username_input
- value: "{{config.user.username}}"
- - step: 3
- action: fill
- page: LoginPage
- element: password_input
- value: "{{config.user.password}}"
- - step: 4
- action: click
- page: LoginPage
- element: submit_button
- assertions:
- - type: url
- expected: "{{config.base_url}}/dashboard"
- - type: visible
- page: DashboardPage
- element: welcome_heading
+  - id: TC_LOGIN_001
+    story: "Valid login"
+    title: "使用有效凭据登录成功"
+    type: positive
+    actions:
+      - step: 1
+        action: navigate
+        target_page: LoginPage
+      - step: 2
+        action: fill
+        page: LoginPage
+        element: username_input
+        value: "{{config.user.username}}"
+      - step: 3
+        action: fill
+        page: LoginPage
+        element: password_input
+        value: "{{config.user.password}}"
+      - step: 4
+        action: click
+        page: LoginPage
+        element: submit_button
+    assertions:
+      - type: url
+        expected: "{{config.base_url}}/dashboard"
+      - type: visible
+        page: DashboardPage
+        element: welcome_heading
 
- - id: TC_LOGIN_002
- story: "Invalid login"
- title: "使用错误密码时显示错误提示"
- type: negative
- actions:
- - step: 1
- action: navigate
- target_page: LoginPage
- - step: 2
- action: fill
- page: LoginPage
- element: username_input
- value: "{{config.user.username}}"
- - step: 3
- action: fill
- page: LoginPage
- element: password_input
- value: "wrong_password_intentional"
- - step: 4
- action: click
- page: LoginPage
- element: submit_button
- assertions:
- - type: visible
- page: LoginPage
- element: error_message
- - type: url
- expected: "{{config.base_url}}/login"
- note: "登录失败不应跳转"
+  - id: TC_LOGIN_002
+    story: "Invalid login"
+    title: "使用错误密码时显示错误提示"
+    type: negative
+    actions:
+      - step: 1
+        action: navigate
+        target_page: LoginPage
+      - step: 2
+        action: fill
+        page: LoginPage
+        element: username_input
+        value: "{{config.user.username}}"
+      - step: 3
+        action: fill
+        page: LoginPage
+        element: password_input
+        value: "wrong_password_intentional"
+      - step: 4
+        action: click
+        page: LoginPage
+        element: submit_button
+    assertions:
+      - type: visible
+        page: LoginPage
+        element: error_message
+      - type: url
+        expected: "{{config.base_url}}/login"
+        note: "登录失败不应跳转"
 ```
 
 参数化场景格式见 `references/spec-schema.md`。

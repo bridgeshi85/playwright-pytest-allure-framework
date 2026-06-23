@@ -58,10 +58,10 @@ logger = logging.getLogger(__name__)
 
 
 class LoginPage:
- """登录页面 Page Object。
+    """登录页面 Page Object。
 
- 封装所有登录页面的定位器与操作，不包含断言逻辑。
- """
+    封装所有登录页面的定位器与操作，不包含断言逻辑。
+    """
 
  URL_PATH = "/login"
 
@@ -78,7 +78,7 @@ class LoginPage:
  def open(self, base_url: str) -> None:
  """导航到登录页。"""
  logger.info(f"Navigating to login page: {base_url}{self.URL_PATH}")
- self.page.goto(f"{base_url}{self.URL_PATH}")
+ self.page.goto(self.URL_PATH)
  self.page.wait_for_url(f"**{self.URL_PATH}")
 
  def login(self, username: str, password: str) -> None:
