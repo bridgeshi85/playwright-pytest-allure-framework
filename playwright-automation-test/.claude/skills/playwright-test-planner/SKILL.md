@@ -4,7 +4,7 @@ description: >
  通过浏览器快照分析页面结构，生成语言无关的测试规格文档（spec.yaml），供 playwright-test-generator 消费。
  触发词："分析页面"、"生成 spec"、"帮我规划测试"、"探索这个页面"、"写测试前先分析"、"生成测试规格"、"test planner"。
  使用场景：用户提供待测功能描述和 URL，skill 探索页面后输出 specs/{feature}_spec.yaml。
- 前置条件：需要 Playwright MCP（@playwright/mcp）提供浏览器工具。
+ 前置条件：需要 Playwright MCP（@playwright/mcp）提供浏览器工具。MCP 配置已内置于 .claude/settings.json，首次使用执行 `npx @playwright/mcp@latest` 确认依赖已安装，然后重新打开 Claude Code 即可自动加载。
  完成后：提示用户确认 spec，然后运行 playwright-test-generator skill 生成代码。
 ---
 
