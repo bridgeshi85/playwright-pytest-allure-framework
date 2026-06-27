@@ -32,3 +32,13 @@ playwright-pytest-allure-framework/
 - commit message 遵循 conventional commits（`fix:` / `feat:` / `chore:`）
 - 代码变更必须附带对应测试
 - 不做 spec 范围外的假设性改动，有疑问先确认
+
+## 分支策略
+
+- **禁止直接提交 main 分支**
+- 所有修改必须按以下流程：
+  1. 从 main 创建新分支（`fix/`、`feat/`、`chore/` 开头）
+  2. 完成修改并提交
+  3. 推送到 GitHub 后创建 PR
+  4. 回复消息告知改动内容并附 PR 链接
+- **例外**：如果当前已在其他非 main 分支上工作，可以直接在该分支上提交，无需新建分支或 PR
