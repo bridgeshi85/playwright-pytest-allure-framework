@@ -260,6 +260,93 @@ Use any of the following phrases in your AI conversation to activate the skill:
 
 ---
 
+## 🤖 AI Skill: Playwright Test Planner
+
+This skill uses **Playwright MCP** (browser automation) to analyze page structure via accessibility snapshots and generate a language-agnostic test specification (`spec.yaml`). The spec is then consumed by the **Playwright Test Generator** skill to produce code.
+
+### Trigger Phrases
+
+> `分析页面` / `生成 spec` / `帮我规划测试` / `探索这个页面` / `写测试前先分析` / `生成测试规格` / `test planner`
+
+### Workflow
+
+| Step | Description |
+|------|-------------|
+| **Step 1 — Understand Intent** | Extract feature name, base URL, and user intent from input |
+| **Step 2 — Explore Page** | Use Playwright MCP to take an accessibility snapshot; extract all interactive elements with locator strategies (priority: `data-testid` > stable id > placeholder > semantic CSS) |
+| **Step 3 — Infer Post-action Pages** | Identify elements that appear after interactions (navigation, modals) and mark them as `post_action` |
+| **Step 4 — Design Scenarios** | Generate at least 1 positive (happy path) and 1 negative (error case) scenario with actions and assertions |
+| **Step 5 — Output spec.yaml** | Write `specs/{feature}_spec.yaml` containing pages, elements, and scenarios |
+
+### Output
+
+```
+playwright-automation-test/
+└── specs/
+    └── {feature}_spec.yaml    # Language-agnostic test specification
+```
+
+### Locator Quality Rules
+
+The planner enforces strict locator quality — dynamic classes, style classes, hash-suffixed IDs, and pure numeric indices are prohibited. When no stable locator is available, the element is marked with `needs_testid: true` so the generator outputs a TODO comment.
+
+### Skill File Structure
+
+```
+.claude/skills/playwright-test-planner/
+├── SKILL.md                    # Skill instruction (execution flow)
+└── references/
+    └── spec-schema.md          # spec.yaml field reference
+```
+
+---
+
+## 🤖 AI Skill: Playwright Test Generator
+
+This skill reads a `spec.yaml` produced by the **Playwright Test Planner** and generates Page Object Model classes and pytest test cases, then validates them by running pytest in a virtual environment.
+
+### Trigger Phrases
+
+> `生成测试代码` / `根据 spec 生成` / `帮我生成 POM` / `生成测试用例` / `test generator` / `从 spec 生成`
+
+### Workflow
+
+| Step | Description |
+|------|-------------|
+| **Step 1 — Read Spec** | Parse `specs/{feature}_spec.yaml` — the sole authoritative input |
+| **Step 2 — Generate Page Object** | Create `pages/{feature}_page.py` with typed locators, URL_PATH, and action methods |
+| **Step 3 — Generate Test Cases** | Create `tests/test_{feature}.py` following Arrange/Act/Assert pattern with Allure decorators |
+| **Step 4 — Validate** | Run `pytest tests/test_{feature}.py -v` and report results |
+
+### Output
+
+```
+playwright-automation-test/
+├── pages/
+│   └── {feature}_page.py      # Page Object with typed locators
+├── tests/
+│   └── test_{feature}.py      # Pytest test cases with Allure annotations
+└── data/
+    └── {feature}/              # Parameterized test data (if applicable)
+```
+
+### Key Conventions
+
+- Every locator gets a one-line inline comment from the spec's `note` field
+- Elements with `needs_testid: true` get a `# TODO` comment above the locator
+- Each test must contain `# Arrange`, `# Act`, `# Assert` section comments
+- Parameterized scenarios generate `@pytest.mark.parametrize` with data loaded at module level
+- `wait_for_load_state("networkidle")` is prohibited
+
+### Skill File Structure
+
+```
+.claude/skills/playwright-test-generator/
+└── SKILL.md                    # Skill instruction (code generation rules)
+```
+
+---
+
 ## 🤝 Contributing
 
 1. Fork the repository
