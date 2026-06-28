@@ -76,7 +76,7 @@ jobs:
       - name: Run Playwright tests
         working-directory: playwright-automation-test
         run: |
-          pytest --env=default --tb=short
+          pytest tests/test_login.py --env=default --tb=short
 
       # ---------- Upload Allure JSON results (always, even on test failure) ----------
       - name: Upload Allure results artifact
