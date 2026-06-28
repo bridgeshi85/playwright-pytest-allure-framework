@@ -43,9 +43,8 @@ browser_snapshot()
 |--------|------|-------------------|-------------------------------|
 | 1 | 元素有 `data-testid` 或 `testid` 属性 | `page.get_by_test_id(value)` | `get_by_test_id` |
 | 2 | 元素有稳定、非动态生成的 `id` 属性 | `page.locator("#id")` | `css_id` |
-| 3 | 输入框有 `placeholder` 属性 | `page.get_by_placeholder(value)` | `get_by_placeholder` |
-| 4 | 无以上属性，但可通过语义化属性组合唯一定位（≤3 层） | `page.locator("tag[attr=val][attr2=val2]")` | `css_combo` |
-| 5 | 业务场景必须按文本匹配（如列表行定位） | `page.get_by_text(value, exact=True)` | `get_by_text` |
+| 3 | 无以上属性，但可通过语义化属性组合唯一定位（≤3 层） | `page.locator("tag[attr=val][attr2=val2]")` | `css_combo` |
+| 4 | 输入框有 `placeholder` 属性（备选，仅限 input 元素） | `page.get_by_placeholder(value)` | `get_by_placeholder` |
 
 > **关键规则**：找到即停止，不向下兼容。对每个元素只记录最高优先级的定位方式。
 
@@ -59,14 +58,33 @@ browser_snapshot()
 | 样式类 | 形如 `col-md-4`、`hover-light`、`btn-primary`、`flex-center` | 样式重构即失效，无领域语义 |
 | 动态 id | 形如 `input-1234`、`el-7f3a`、包含数字后缀的随机 id | 每次渲染不同，不可靠 |
 | 纯数字索引 | `nth=2`、`:eq(3)` | 顺序变化即失效，除非明确业务语义（第一条/最后一条） |
-| 文本内容（默认禁止） | 通过 visible text 定位 | 文本易变且多语言不友好；**例外**：仅限表格数据行 / 单元格定位时允许使用，其他场景一律禁止 |
+| 文本内容 | 通过 visible text 定位 | 文本易变且多语言不友好，一律禁止（特殊豁免见下方） |
 
-**CSS 组合定位的约束**（仅在优先级 4 时适用）：
+> **唯一豁免**：表格数据行 / 动态列表中，行的文本内容本身就是测试数据的一部分时，允许使用 `page.get_by_text(value, exact=True)`。此时记录 `locator_strategy: get_by_text`，并在 `note` 字段说明"该元素为动态数据行，文本即业务标识符"。其他任何场景（按钮、标签、标题、表单项）一律不得使用。
 
-- 只使用**语义化属性**：`[type]`、`[name]`、`[data-*]`（非 testid 的其他 data 属性）、`[aria-*]`、业务相关 class（如 `product-price`、`add-to-cart`）
+**CSS 组合定位的约束**（仅在优先级 3 时适用）：
+
+- 只使用**语义化属性**，允许清单如下：
+
+  | 属性类型 | 示例 | 说明 |
+  |---------|------|------|
+  | `[role]` | `[role="dialog"]`、`[role="button"]` | HTML 语义角色 |
+  | `[aria-*]` | `[aria-label="关闭"]`、`[aria-expanded="true"]` | 无障碍属性 |
+  | `[type]`、`[name]` | `input[type="email"]`、`input[name="search"]` | 结构化表单属性 |
+  | `[data-*]`（非 testid） | `[data-status="active"]` | 业务数据属性 |
+  | 业务语义 class | `.product-price`、`.add-to-cart` | 有领域含义的 class |
+
+  **禁止**：样式类（`.btn-primary`、`.col-md-4`）、动态哈希类（`.css-1a2b3c`）
+
 - 路径层级控制在 **2～3 层以内**；超过 3 层须重新寻找更近的锚点
 - 生成前验证唯一性：快照中搜索该选择器，确认只匹配到目标元素
-- 在 spec 的 `note` 字段说明为何无法使用优先级 1～3 的策略
+- 在 spec 的 `note` 字段说明为何无法使用优先级 1～2 的策略
+
+**父锚点消歧义**（当目标元素单独定位不唯一时）：
+
+如果符合以下条件，允许用最近的稳定祖先元素作为锚点缩小范围，只使用父元素的 `data-testid`。
+- 父元素必须有稳定的 `data-testid` 属性
+- spec 中 `locator_value` 直接记录完整 CSS 路径，Generator 生成单个 `page.locator("...")`
 
 **遇到无合适定位器时**：不强行造定位器，在 spec 中标记 `needs_testid: true`，并在输出摘要中提示用户与开发沟通添加 `data-testid`。
 
