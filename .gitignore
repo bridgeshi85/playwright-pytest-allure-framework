@@ -4,3 +4,5 @@
 /playwright-automation-test/allure-report
 *.pyc
 .playwright-mcp/*.yml
+playwright-automation-test/.playwright-mcp/*.yml
+playwright-automation-test/.playwright-mcp/*.png
