@@ -299,4 +299,14 @@ def load_test_data(feature: str, filename: str) -> list[dict]:
 ```
 
 ### spec 中 `test_data` 字段存在时
-同时生成对应的数据文件 `data/{feature}/{filename}`，从 spec 的 `sample_data` 字段提取初始数据（若无 `sample_data`，生成包含 2 条示例数据的空模板）。
+
+**`data/` 目录和 JSON 数据文件由 Generator 独占创建，Planner 不写数据文件。**
+
+读取 spec 中场景的 `test_data.sample_data`，写入 `data/{feature}/{filename}`：
+
+```bash
+mkdir -p data/{feature}/
+```
+
+- 若 spec 包含 `sample_data`：直接提取内容写入 JSON 文件
+- 若 spec 无 `sample_data`：生成含 2 条占位数据的空模板，提示用户补充

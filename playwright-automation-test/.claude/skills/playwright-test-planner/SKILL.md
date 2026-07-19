@@ -230,7 +230,9 @@ mkdir -p specs/
 
 在 `specs/{feature}_spec.yaml` 输出，格式见下方模板。完整字段说明见 `references/spec-schema.md`。
 
-**不创建任何 `.py` 文件，不运行任何测试命令。**
+**不创建任何 `.py` 文件，不运行任何测试命令，不创建任何 `data/` 目录或 JSON 数据文件。**
+
+参数化场景的测试数据以 `sample_data` 内嵌在 spec.yaml 中，由 `playwright-test-generator` 读取后写入 `data/{feature}/` 目录。
 
 完成后展示摘要（feature 名、页面数、场景数），并提示：
 > "已生成 `specs/{feature}_spec.yaml`。请确认场景覆盖是否完整，确认后运行 `playwright-test-generator` skill 生成代码。"

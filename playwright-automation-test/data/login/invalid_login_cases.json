@@ -1,0 +1,32 @@
+[
+  {
+    "id": "LOGIN_002_WRONG_PASSWORD",
+    "description": "用户名正确，密码错误",
+    "username": "admin",
+    "password": "wrong123"
+  },
+  {
+    "id": "LOGIN_002_WRONG_USERNAME",
+    "description": "用户名错误，密码正确",
+    "username": "wrong_user",
+    "password": "123456"
+  },
+  {
+    "id": "LOGIN_002_EMPTY_USERNAME",
+    "description": "用户名为空",
+    "username": "",
+    "password": "123456"
+  },
+  {
+    "id": "LOGIN_002_EMPTY_PASSWORD",
+    "description": "密码为空",
+    "username": "admin",
+    "password": ""
+  },
+  {
+    "id": "LOGIN_002_ALL_EMPTY",
+    "description": "用户名和密码均为空",
+    "username": "",
+    "password": ""
+  }
+]
