@@ -1,0 +1,130 @@
+# 由 playwright-test-planner 自动生成
+meta:
+  feature: "login"
+  allure_feature: "User Authentication"
+  generated_by: "playwright-test-planner"
+  base_url: "http://localhost:5173"
+
+pages:
+  - class_name: LoginPage
+    file_path: pages/login_page.py
+    url_path: /
+    elements:
+      - name: username_input
+        locator_strategy: get_by_test_id
+        locator_value: "input-username"
+        note: "用户名输入框"
+      - name: password_input
+        locator_strategy: get_by_test_id
+        locator_value: "input-password"
+        note: "密码输入框"
+      - name: submit_button
+        locator_strategy: get_by_test_id
+        locator_value: "btn-login"
+        note: "登录按钮"
+      - name: error_message
+        locator_strategy: css_combo
+        locator_value: ".ant-message-notice-error"
+        note: >-
+          登录失败错误提示（AntD message toast）。页面未提供 data-testid，
+          该 toast 无稳定业务属性，仅能用组件库状态 class 兜底定位；
+          建议开发在错误提示上补充 data-testid。
+        post_action: true
+        needs_testid: true
+
+  - class_name: HomePage
+    file_path: pages/home_page.py
+    url_path: /home
+    post_navigation: true
+    elements:
+      - name: welcome_text
+        locator_strategy: get_by_test_id
+        locator_value: "welcome-text"
+        note: "登录成功后首页欢迎文本"
+        post_action: true
+
+scenarios:
+  - id: TC_LOGIN_001
+    story: "Valid login"
+    title: "使用有效凭据登录成功并跳转首页"
+    type: positive
+    actions:
+      - step: 1
+        action: navigate
+        target_page: LoginPage
+      - step: 2
+        action: fill
+        page: LoginPage
+        element: username_input
+        value: "admin"
+      - step: 3
+        action: fill
+        page: LoginPage
+        element: password_input
+        value: "123456"
+      - step: 4
+        action: click
+        page: LoginPage
+        element: submit_button
+    assertions:
+      - type: url
+        expected: "{{config.base_url}}/home"
+      - type: visible
+        page: HomePage
+        element: welcome_text
+
+  - id: TC_LOGIN_002
+    story: "Invalid login"
+    title: "使用无效凭据登录时停留在登录页并提示错误"
+    type: parametrize
+    test_data:
+      feature: "login"
+      filename: "invalid_login_cases.json"
+    actions:
+      - step: 1
+        action: navigate
+        target_page: LoginPage
+      - step: 2
+        action: fill
+        page: LoginPage
+        element: username_input
+        value: "{{data.username}}"
+      - step: 3
+        action: fill
+        page: LoginPage
+        element: password_input
+        value: "{{data.password}}"
+      - step: 4
+        action: click
+        page: LoginPage
+        element: submit_button
+    assertions:
+      - type: visible
+        page: LoginPage
+        element: error_message
+      - type: url
+        expected: "{{config.base_url}}/"
+        note: "登录失败不应跳转"
+
+# 参数化测试数据草案（供 playwright-test-generator 写入 data/login/invalid_login_cases.json）
+sample_data:
+  - id: LOGIN_002_WRONG_PASSWORD
+    description: "用户名正确，密码错误"
+    username: "admin"
+    password: "wrong123"
+  - id: LOGIN_002_WRONG_USERNAME
+    description: "用户名错误，密码正确"
+    username: "wrong_user"
+    password: "123456"
+  - id: LOGIN_002_EMPTY_USERNAME
+    description: "用户名为空"
+    username: ""
+    password: "123456"
+  - id: LOGIN_002_EMPTY_PASSWORD
+    description: "密码为空"
+    username: "admin"
+    password: ""
+  - id: LOGIN_002_ALL_EMPTY
+    description: "用户名和密码均为空"
+    username: ""
+    password: ""

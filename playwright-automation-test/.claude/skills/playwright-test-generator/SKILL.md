@@ -164,31 +164,67 @@ class TestLogin:
 
 #### 参数化测试模板（type: parametrize）
 
+spec 中 `type: parametrize` 的场景必须带 `test_data` 字段：
+
+```yaml
+# spec.yaml 示例（参数化场景）
+- id: TC_LOGIN_INVALID
+  story: "Invalid login"
+  title: "无效凭据登录失败停留在登录页"
+  type: parametrize
+  test_data:
+    filename: "invalid_login_cases.json"
+    sample_data:
+      - { username: "valid@test.com", password: "wrong_pass", description: "密码错误" }
+      - { username: "", password: "valid_pass", description: "用户名为空" }
+      - { username: "valid@test.com", password: "", description: "密码为空" }
+  actions:
+    - { step: 1, action: navigate, target_page: LoginPage }
+    - { step: 2, action: fill, page: LoginPage, element: username_input, value: "{{data.username}}" }
+    - { step: 3, action: fill, page: LoginPage, element: password_input, value: "{{data.password}}" }
+    - { step: 4, action: click, page: LoginPage, element: submit_button }
+  assertions:
+    - { type: url, expected: "{{config.base_url}}/", note: "登录失败不应跳转" }
+```
+
+**生成数据文件**：从 `sample_data` 提取内容写入 `data/{feature}/{filename}`：
+
+```json
+[
+  { "username": "valid@test.com", "password": "wrong_pass", "description": "密码错误" },
+  { "username": "", "password": "valid_pass", "description": "用户名为空" },
+  { "username": "valid@test.com", "password": "", "description": "密码为空" }
+]
+```
+
+**生成测试代码**：用 `description` 字段作为 pytest `ids` 参数，让测试名称可读：
+
 ```python
 from utils.test_data_loader import load_test_data
 
-_PRODUCT_SEARCH_CASES = load_test_data("product", "search_cases.json")
+_INVALID_LOGIN_CASES = load_test_data("login", "invalid_login_cases.json")
 
 
-@allure.feature("Product Management")
-class TestProductSearch:
+@allure.feature("User Authentication")
+class TestLogin:
 
- @allure.story("Search by name")
- @allure.title("按名称搜索产品")
- @pytest.mark.parametrize("case", _PRODUCT_SEARCH_CASES)
- def test_search_product(self, page: Page, config: dict, case: dict) -> None:
+ @allure.story("Invalid login")
+ @allure.title("无效凭据登录失败停留在登录页")
+ @pytest.mark.parametrize(
+ "case",
+ _INVALID_LOGIN_CASES,
+ ids=[c["description"] for c in _INVALID_LOGIN_CASES],
+ )
+ def test_tc_login_invalid(self, page: Page, config: dict, case: dict) -> None:
  # Arrange
- product_page = ProductListPage(page)
- product_page.open(config["base_url"])
+ login_page = LoginPage(page)
+ login_page.open(config["base_url"])
 
  # Act
- product_page.search(keyword=case["keyword"])
+ login_page.login(username=case["username"], password=case["password"])
 
  # Assert
- if case["expect_results"]:
- expect(product_page.table_rows).not_to_have_count(0)
- else:
- expect(product_page.table_empty_placeholder).to_be_visible()
+ expect(page).to_have_url(f"{config['base_url']}/")
 ```
 
 测试规则：
@@ -214,7 +250,31 @@ venv/bin/python -m pytest tests/test_{feature}.py -v
 ## 注意事项
 
 ### 关于现有 Page Object 的兼容
-本项目现有 Page Object（`login_page.py` 等）使用较简单的结构（无类型注解、无 `URL_PATH`）。**生成新文件时遵循本 skill 的规范**，不修改现有文件，除非用户明确要求重构。
+
+生成前先检查目标文件是否已存在：
+
+```bash
+# Step 2 执行前检查
+ls pages/{feature}_page.py 2>/dev/null
+```
+
+| 文件状态 | 处理方式 |
+|---------|---------|
+| **文件不存在** | 按模板新建 |
+| **文件已存在** | 读取现有文件，执行增量合并（见下方规则） |
+
+**增量合并规则（文件已存在时）：**
+
+1. **新增元素**：spec 中有、现有 POM 中无的元素 → 追加到 `__init__` 对应区域末尾
+2. **保留现有元素**：现有 POM 中已有的元素（按属性名匹配） → 原样保留，不覆盖 locator 实现
+3. **新增方法**：spec 中涉及、现有 POM 中无对应方法 → 追加到类末尾
+4. **保留现有方法**：现有方法原样保留，不重写
+5. **不删除任何现有内容**：现有元素/方法可能被其他测试引用
+
+合并完成后，在输出摘要中列出：
+- 新增的元素名（`+ element_name`）
+- 新增的方法名（`+ method_name`）
+- 跳过的已有元素（`= element_name (kept)`）
 
 ### test_data_loader 不存在时
 若 `utils/test_data_loader.py` 不存在，先生成该文件：
@@ -239,4 +299,14 @@ def load_test_data(feature: str, filename: str) -> list[dict]:
 ```
 
 ### spec 中 `test_data` 字段存在时
-同时生成对应的数据文件 `data/{feature}/{filename}`，从 spec 的 `sample_data` 字段提取初始数据（若无 `sample_data`，生成包含 2 条示例数据的空模板）。
+
+**`data/` 目录和 JSON 数据文件由 Generator 独占创建，Planner 不写数据文件。**
+
+读取 spec 中场景的 `test_data.sample_data`，写入 `data/{feature}/{filename}`：
+
+```bash
+mkdir -p data/{feature}/
+```
+
+- 若 spec 包含 `sample_data`：直接提取内容写入 JSON 文件
+- 若 spec 无 `sample_data`：生成含 2 条占位数据的空模板，提示用户补充
