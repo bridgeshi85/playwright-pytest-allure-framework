@@ -4,10 +4,12 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
 
-# Cancel in-progress runs for the same PR.
+# Cancel in-progress runs for the same PR/branch.
 concurrency:
-  group: "pr-test-${{ github.head_ref || github.run_id }}"
+  group: "pr-test-${{ github.head_ref || github.ref }}"
   cancel-in-progress: true
 
 permissions:
@@ -88,10 +90,10 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
-  # ── Stage 2: Generate Allure HTML & deploy to GitHub Pages ──
+  # ── Stage 2: Generate Allure HTML & deploy to GitHub Pages (main only) ──
   deploy:
     needs: test
-    if: always()
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -127,4 +129,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v4
-        if: github.ref == 'refs/heads/main'
