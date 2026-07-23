@@ -8,5 +8,6 @@ loguru
 pyyaml~=6.0.3
 rich
 requests
+pylint~=3.3.0
 
 allure-python-commons~=2.15.2
