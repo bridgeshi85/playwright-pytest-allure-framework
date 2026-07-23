@@ -2,7 +2,7 @@ import os
 import allure
 from utils.config_loader import load_config
 # Import fixtures to ensure they are registered
-from fixtures.report_fixture import save_screenshot
+from fixtures.report_fixture import save_screenshot, test_directory
 from fixtures.browser_fixture import *
 
 logger = logging.getLogger(__name__)
