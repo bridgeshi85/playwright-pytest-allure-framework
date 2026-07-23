@@ -11,15 +11,11 @@ test_failures_showcase.py
   test_profile_edit_button_not_found → real_bug        （UI 重构后 testid 已变更）
   test_shop_product_list_visible     → flaky_env       （/api/products 返回 404）
 """
-
-import pytest
 from pages.login_page import LoginPage
 from pages.home_page import HomePage
 from pages.dashboard_page import DashboardPage
 from pages.profile_page import ProfilePage
 from pages.shop_page import ShopPage
-
-
 # ---------------------------------------------------------------------------
 # 辅助：登录并跳转到首页
 # ---------------------------------------------------------------------------
@@ -31,8 +27,6 @@ def _login(page, base_url: str):
     login_page.login("admin", "123456")
     home_page = HomePage(page)
     assert home_page.should_show_welcome_text(), "登录失败，无法进入后续测试"
-
-
 # ---------------------------------------------------------------------------
 # Case 1: flaky_element — Dashboard 统计卡片延迟渲染
 # ---------------------------------------------------------------------------
@@ -57,8 +51,6 @@ def test_dashboard_stats_load_timeout(page, config):
 
     # 若到达这里说明元素已出现（不会到达）
     assert dashboard.get_user_count() == "1128"
-
-
 # ---------------------------------------------------------------------------
 # Case 2: real_bug — Profile 邮箱断言文本不匹配
 # ---------------------------------------------------------------------------
@@ -84,8 +76,6 @@ def test_profile_email_assertion(page, config):
     assert actual_email == "admin@demo.com", (
         f"邮箱不匹配：期望 admin@demo.com，实际 {actual_email}"
     )
-
-
 # ---------------------------------------------------------------------------
 # Case 3: real_bug — Profile 编辑按钮 testid 已重构，旧 ID 找不到元素
 # ---------------------------------------------------------------------------
@@ -107,8 +97,6 @@ def test_profile_edit_button_not_found(page, config):
 
     # ❌ 使用旧 testid，元素不存在 → 触发 TimeoutError（locator resolved to 0 elements）
     profile.click_edit_button_with_old_id()
-
-
 # ---------------------------------------------------------------------------
 # Case 4: flaky_env — Shop 页调用 /api/products 返回 404，商品列表不渲染
 # ---------------------------------------------------------------------------

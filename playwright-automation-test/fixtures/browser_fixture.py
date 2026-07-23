@@ -1,15 +1,14 @@
-import pytest
 import logging
 
-from playwright.sync_api import ViewportSize
-from playwright.sync_api import sync_playwright
-from fixtures.report_fixture import save_screenshot, test_directory
+import pytest
+from playwright.sync_api import ViewportSize, sync_playwright
+from fixtures.report_fixture import test_directory
 
 
 logger = logging.getLogger(__name__)
 
 
-def create_context(browser, test_directory, locale="en-US"):
+def create_context(browser, locale="en-US"):
     """
     Create a new browser context with specified configurations.
 
@@ -82,7 +81,7 @@ def browser(config):
 
 
 @pytest.fixture
-def page(browser, test_directory, request):
+def page(browser, request):
     """
     创建一个新的浏览器页面。
     - 依赖 browser 和 test_directory fixture。
@@ -92,7 +91,7 @@ def page(browser, test_directory, request):
     :param test_directory: 测试结果目录 - 来自于 report_fixture.py
     :param request: pytest 请求对象
     """
-    context, trace_dir = create_context(browser, test_directory)
+    context, trace_dir = create_context(browser)
     page = context.new_page()
 
     yield page

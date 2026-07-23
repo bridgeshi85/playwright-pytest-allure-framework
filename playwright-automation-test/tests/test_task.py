@@ -1,8 +1,5 @@
 import allure
-import pytest  # noqa: F401 – used by @pytest.mark.parametrize
 from pages.task_page import TaskPage
-
-
 @allure.feature("Task Management")
 class TestAddTask:
     """Tests for adding tasks via the task management page."""
@@ -34,5 +31,3 @@ class TestAddTask:
         #     assert task_page.get_task_description(title) == description, (
         #         f"Expected description '{description}' for task '{title}', but got a different value."
         #     )
-
-

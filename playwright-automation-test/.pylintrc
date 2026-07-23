@@ -23,6 +23,28 @@ disable=
     fixme,
     # Invalid name (we'll configure naming separately)
     invalid-name,
+    # --- pytest / playwright / loguru 适配 ---
+    # pytest fixture 通过参数名注入，redefined-outer-name 是正常模式
+    redefined-outer-name,
+    # fixture 签名中的参数是依赖注入，不是 unused
+    unused-argument,
+    # loguru 推荐使用 f-string，pylint 的 lazy % 建议不适用
+    logging-fstring-interpolation,
+    # Page Object 方法少是正常的（职责单一）
+    too-few-public-methods,
+    # conftest.py 常用 wildcard import 导出 fixture
+    wildcard-import,
+    unused-wildcard-import,
+    # Page Object 的 locator/属性 pylint 无法静态推断
+    no-member,
+    # fixture 中访问内部属性（如 _trace_path）是合理的
+    protected-access,
+    # allure 等第三方库延迟导入避免启动开销
+    import-outside-toplevel,
+    # 捕获通用 Exception 在测试框架中是合理的
+    broad-exception-caught,
+    # 本地开发环境不一定安装了所有依赖，CI 环境会安装
+    import-error,
 
 [REPORTS]
 # Set the output format
