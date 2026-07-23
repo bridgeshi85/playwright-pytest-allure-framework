@@ -1,9 +1,9 @@
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
 
 import pytest
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +36,11 @@ def test_directory(request):
     """
     logger.debug("create result folder")
     # 确保基础测试结果目录存在
-    test_results_dir = Path('output/screenshots')
+    test_results_dir = Path("output/screenshots")
     test_results_dir.mkdir(parents=True, exist_ok=True)
 
     # 获取当前日期
-    date_str = datetime.now().strftime('%Y-%m-%d')
+    date_str = datetime.now().strftime("%Y-%m-%d")
     # 根据时间创建唯一的测试序号
     test_count = sum(1 for _ in os.scandir(test_results_dir) if _.is_dir()) + 1
     test_dir_name = f"{date_str}-{test_count}"

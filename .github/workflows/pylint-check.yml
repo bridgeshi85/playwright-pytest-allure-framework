@@ -1,0 +1,45 @@
+name: Pylint Code Quality Check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'playwright-automation-test/**/*.py'
+      - 'playwright-automation-test/requirements.txt'
+      - '.github/workflows/pylint-check.yml'
+
+jobs:
+  pylint:
+    name: Pylint Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: playwright-automation-test/requirements.txt
+
+      - name: Install dependencies
+        working-directory: playwright-automation-test
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Pylint
+        working-directory: playwright-automation-test
+        run: |
+          echo "=== Pylint Scan ==="
+          pylint $(find . -name "*.py" -type f \
+            ! -path "./__pycache__/*" \
+            ! -path "./.venv/*" \
+            ! -path "./venv/*" \
+            ! -path "./.claude/*") \
+            --rcfile=.pylintrc \
+            --fail-under=8.0 \
+            --output-format=colorized

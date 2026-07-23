@@ -1,9 +1,7 @@
-import pytest
 import logging
 
-from playwright.sync_api import ViewportSize
-from playwright.sync_api import sync_playwright
-from fixtures.report_fixture import save_screenshot, test_directory
+import pytest
+from playwright.sync_api import ViewportSize, sync_playwright
 
 
 logger = logging.getLogger(__name__)

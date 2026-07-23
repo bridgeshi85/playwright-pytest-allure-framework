@@ -67,4 +67,3 @@ class TaskPage:
         description = item.locator("p").inner_text()
         logger.info(f"Task '{title}' description: '{description}'")
         return description
-
