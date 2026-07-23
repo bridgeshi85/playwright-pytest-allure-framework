@@ -30,6 +30,11 @@ playwright-pytest-allure-framework/
 - 编码风格、Python 规范、Playwright 测试规范、Locator 优先级等 **全部定义在 `playwright-automation-test/CLAUDE.md`**，操作前必须读取
 - `demo-frontend/`、`jenkins/`、`docker-compose.yml` 为辅助基础设施，不染指非相关变更
 - commit message 遵循 conventional commits（`fix:` / `feat:` / `chore:`）
+- **代码变更后必须运行 `pylint` 扫描**，确保代码质量评分不低于 8.0
+  ```bash
+  cd playwright-automation-test
+  pylint $(find . -name "*.py" -type f ! -path "./__pycache__/*" ! -path "./.venv/*" ! -path "./venv/*" ! -path "./.claude/*") --rcfile=.pylintrc
+  ```
 - 代码变更后必须运行 `pytest` 验证，确保不破坏已有测试用例
 - 新增测试用例必须符合 CLAUDE.md 中的测试结构规范（Arrange/Act/Assert）
 - 不做 spec 范围外的假设性改动，有疑问先确认
