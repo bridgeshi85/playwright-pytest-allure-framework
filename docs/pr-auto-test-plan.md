@@ -1,7 +1,8 @@
 # PR Auto-Test：基于 Diff 的自动化测试生成
 
-> 状态：**Draft / Plan**
+> 状态：**Draft / Plan v2**
 > 创建：2026-07-29
+> 更新：2026-07-29（移除 demo-frontend 硬编码，支持任意前端仓库 PR）
 > 分支：`feat/pr-diff-auto-test-workflow`
 
 ---
@@ -26,7 +27,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │  GitHub Action Workflow (pr-auto-test.yml)                      │
 │  trigger: pull_request (opened / synchronize / reopened)        │
-│  filter: paths → demo-frontend/**                               │
+│  filter: 自动检测前端文件变更（.tsx/.jsx/.vue/.ts/.js/.css 等）   │
 └───────────────┬─────────────────────────────────────────────────┘
                 │
                 ▼
@@ -97,7 +98,7 @@
 
 **输入**：
 - `--diff-file /tmp/pr.diff`（或 stdin）
-- `--project-root demo-frontend/`（限定解析范围）
+- `--frontend-root <auto|path>`（默认 `auto`：自动检测含 `package.json` 的目录）
 
 **输出**：`change_manifest.json`
 
@@ -105,6 +106,8 @@
 {
   "pr_number": 42,
   "base_branch": "main",
+  "frontend_root": "demo-frontend",
+  "is_fork": false,
   "changed_files": [
     {
       "path": "demo-frontend/src/components/LoginForm.tsx",
@@ -134,9 +137,23 @@
 }
 ```
 
-**解析策略**：
+**前端项目自动检测**：
+当 `--frontend-root auto`（默认）时，按以下优先级定位前端项目：
+1. diff 中出现 `package.json` 的最近公共父目录
+2. 仓库根目录存在 `package.json` → 视为 monorepo，按子目录拆分
+3. 仓库根目录存在 `vite.config.*` / `next.config.*` / `nuxt.config.*` / `vue.config.*` → 根目录即前端项目
+4. 以上都不满足 → 取 diff 中前端文件（`.tsx/.jsx/.vue/.ts/.js/.css/.html`）最多的目录
+
+**manifest 新增字段说明**：
+
+| 字段 | 说明 |
+|------|------|
+| `frontend_root` | 自动检测到的前端项目根目录（相对仓库根） |
+| `is_fork` | PR 是否来自 fork（影响代码推送策略） |
+
+**解析策略**（假设纯前端技术栈）：
 - 文件级：从 diff header 提取路径和变更类型
-- 组件级：正则匹配 React 组件声明（`function Xxx` / `const Xxx =` / `export default`）
+- 组件级：正则匹配 React/Vue 组件声明（`function Xxx` / `const Xxx =` / `export default` / `defineComponent`）
 - 函数级：正则匹配函数/方法定义，结合 hunk header (`@@ ... @@`) 定位变更所在函数
 - 路由级：扫描 `router` / `routes` 配置文件中的路径变更
 - UI 元素级：正则匹配 `data-testid`、`placeholder`、`aria-label` 属性的增删改
@@ -216,8 +233,18 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened]
     paths:
-      - 'demo-frontend/**'  # 仅前端变更触发
+      - '**/*.tsx'
+      - '**/*.jsx'
+      - '**/*.vue'
+      - '**/*.ts'
+      - '**/*.js'
+      - '**/*.css'
+      - '**/*.html'
+      - '**/*.svelte'
 ```
+
+> 不绑定特定目录。任何前端文件变更都会触发。
+> 非前端变更（纯文档、纯后端）不会触发。
 
 **权限**：
 
@@ -239,7 +266,8 @@ jobs:
       # 1. Checkout（完整历史，用于 diff）
       # 2. Setup Python + Node
       # 3. 获取 PR diff → /tmp/pr.diff
-      # 4. 运行 diff_parser.py → change_manifest.json
+      # 4. 运行 diff_parser.py（--frontend-root auto）→ change_manifest.json
+      #    ↳ 自动检测前端项目目录，写入 manifest.frontend_root 字段
       # 5. 判断是否有可测试变更（无则提前退出）
       # 6. claude -p: pr-test-analyzer → spec.yaml
       # 7. claude -p: playwright-test-generator → code
@@ -275,6 +303,28 @@ claude -p "读取 specs/ 下本次变更的 spec 文件，使用 playwright-test
 | `ANTHROPIC_API_KEY` | Claude CLI 认证 |
 | `GITHUB_TOKEN` | 自动注入，用于 gh 命令 |
 
+**Fork PR 处理**：
+
+PR 可能来自外部 fork，此时无法直接 push 到源分支。workflow 需区分两种场景：
+
+```bash
+# 检测 PR 是否来自 fork
+PR_HEAD_REPO=$(gh pr view $PR_NUMBER --json headRepository -q '.headRepository.nameWithOwner')
+PR_BASE_REPO=$(gh pr view $PR_NUMBER --json baseRepository -q '.baseRepository.nameWithOwner')
+
+if [ "$PR_HEAD_REPO" = "$PR_BASE_REPO" ]; then
+  # 同仓库 PR → 直接 push 到源分支
+  git push origin HEAD:$PR_BRANCH
+else
+  # Fork PR → 在本仓库开新 PR（关联原 PR）
+  gh pr create --title "[Auto-Test] Tests for #$PR_NUMBER" \
+    --body "自动生成测试，关联 #$PR_NUMBER" \
+    --base main
+fi
+```
+
+> 同仓库 PR 优先 push 到源分支（减少 PR 噪音）；fork PR 开新 PR 并 comment 到原 PR。
+
 ---
 
 ## 4. 数据流
@@ -293,7 +343,7 @@ pr-test-analyzer (claude -p)
   reads: change_manifest.json
   reads: specs/*.yaml (existing)
   reads: pages/*.py (existing POM)
-  reads: demo-frontend/src/** (changed source)
+  reads: <frontend-root>/src/** (changed source, auto-detected)
   writes: specs/{feature}_spec.yaml (new/updated)
        │
        ▼
@@ -359,7 +409,8 @@ pytest → pass/fail
 
 ### Phase 1: 基础设施（本 PR）
 - [x] 创建分支 + plan 文件
-- [ ] `scripts/diff_parser.py` — 基础版（文件级 + 组件级解析）
+- [x] 移除 demo-frontend 硬编码，支持任意前端仓库
+- [ ] `scripts/diff_parser.py` — 基础版（文件级 + 组件级解析 + 前端项目自动检测）
 - [ ] `.github/workflows/pr-auto-test.yml` — 骨架（diff → parse → 输出 manifest）
 - [ ] 验证：手动 PR 触发，确认 manifest 输出正确
 
@@ -377,7 +428,7 @@ pytest → pass/fail
 
 ### Phase 4: 增强（可选）
 - [ ] CI 中启动 demo-frontend，analyzer 做真实快照验证
-- [ ] 支持多前端项目（不限于 demo-frontend）
+- [x] 支持任意前端仓库 PR（移除 demo-frontend 硬编码）
 - [ ] 测试覆盖率 diff 报告
 - [ ] 失败自动重试 + triaging skill 联动
 
@@ -388,7 +439,8 @@ pytest → pass/fail
 | # | 问题 | 当前倾向 | 备注 |
 |---|------|---------|------|
 | 1 | analyzer 是否需要浏览器探索？ | Phase 1 不需要，Phase 4 可选 | CI 启动前端增加 ~30s |
-| 2 | 生成的代码推送到 PR 源分支 vs 开新 PR？ | 推送到源分支（减少 PR 噪音） | 需要 fork 场景下不可行 |
+| 2 | 生成的代码推送到 PR 源分支 vs 开新 PR？ | 推送到源分支（减少 PR 噪音） | fork 场景需开新 PR |
+| 7 | PR 来自外部仓库（fork）时如何处理？ | 开新 PR 到本仓库（不推送到 fork） | 需要额外权限处理 |
 | 3 | 多个 feature 受影响时并行 vs 串行？ | 串行（简单可靠） | 并行需处理 spec 冲突 |
 | 4 | diff_parser 是否需要 AST 解析（ts-morph）？ | Phase 1 正则够用 | 复杂重构场景再引入 |
 | 5 | Claude CLI 版本锁定？ | 锁定 major version | 避免 breaking change |
@@ -421,7 +473,8 @@ playwright-pytest-allure-framework/
 │   ├── pages/                    ← generator 输出目标
 │   ├── tests/                    ← generator 输出目标
 │   └── data/                     ← generator 输出目标
-└── demo-frontend/                ← 被测前端（PR diff 来源）
+└── <任意前端仓库>/               ← 被测前端（PR diff 来源，自动检测）
+    └── 本仓库内置 demo-frontend/ 作为示例和 CI 测试用
 ```
 
 ---
