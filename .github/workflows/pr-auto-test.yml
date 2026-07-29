@@ -1,0 +1,191 @@
+name: PR Auto-Test
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - '**/*.tsx'
+      - '**/*.jsx'
+      - '**/*.vue'
+      - '**/*.ts'
+      - '**/*.js'
+      - '**/*.css'
+      - '**/*.html'
+      - '**/*.svelte'
+
+concurrency:
+  group: "pr-auto-test-${{ github.event.pull_request.number }}"
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  analyze-and-generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 完整历史，用于 diff
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Get PR diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          gh pr diff $PR_NUMBER > /tmp/pr.diff
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+
+          # 检测是否来自 fork
+          PR_HEAD_REPO=$(gh pr view $PR_NUMBER --json headRepository -q '.headRepository.nameWithOwner' 2>/dev/null || echo "")
+          PR_BASE_REPO=$(gh pr view $PR_NUMBER --json baseRepository -q '.baseRepository.nameWithOwner' 2>/dev/null || echo "")
+          if [ "$PR_HEAD_REPO" != "$PR_BASE_REPO" ] && [ -n "$PR_HEAD_REPO" ]; then
+            echo "IS_FORK=true" >> $GITHUB_ENV
+          else
+            echo "IS_FORK=false" >> $GITHUB_ENV
+          fi
+
+      - name: Run diff_parser.py
+        run: |
+          python3 scripts/diff_parser.py \
+            --diff-file /tmp/pr.diff \
+            --frontend-root auto \
+            --repo-root . \
+            --pr-number ${{ env.PR_NUMBER }} \
+            ${{ env.IS_FORK == 'true' && '--is-fork' || '' }} \
+            --output /tmp/change_manifest.json
+
+          echo "=== Change Manifest ==="
+          cat /tmp/change_manifest.json
+
+      - name: Check if frontend changes exist
+        id: check
+        run: |
+          CHANGED_FILES=$(jq '.changed_files | length' /tmp/change_manifest.json)
+          if [ "$CHANGED_FILES" -eq 0 ]; then
+            echo "No frontend files changed, skipping test generation"
+            echo "SKIP=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "SKIP=false" >> $GITHUB_OUTPUT
+
+      - name: Install Claude CLI
+        if: steps.check.outputs.SKIP != 'true'
+        run: |
+          npm install -g @anthropic-ai/claude-code
+
+      - name: Run pr-test-analyzer (Skill A)
+        if: steps.check.outputs.SKIP != 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          claude -p "$(cat <<'EOF'
+          你是 pr-test-analyzer。请读取 /tmp/change_manifest.json，分析变更影响，
+          按照 playwright-automation-test/.claude/skills/pr-test-analyzer/SKILL.md 的流程生成/更新 spec。
+          输出到 playwright-automation-test/specs/ 目录。
+          EOF
+          )" \
+            --allowedTools "Read,Write,Bash" \
+            --max-turns 15 \
+            --output-format json > /tmp/analyzer_output.json
+
+      - name: Run playwright-test-generator (Skill B)
+        if: steps.check.outputs.SKIP != 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          cd playwright-automation-test
+          claude -p "读取 specs/ 下本次变更的 spec 文件，使用 playwright-test-generator 生成代码" \
+            --allowedTools "Read,Write,Bash" \
+            --max-turns 20 \
+            --output-format json > /tmp/generator_output.json
+
+      - name: Setup Python test environment
+        if: steps.check.outputs.SKIP != 'true'
+        working-directory: playwright-automation-test
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Run pytest
+        if: steps.check.outputs.SKIP != 'true'
+        working-directory: playwright-automation-test
+        run: |
+          # 运行新生成的测试（根据 generator 输出确定）
+          pytest tests/ -v --tb=short 2>&1 | tee /tmp/pytest_output.txt
+          echo "PYTEST_EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
+
+      - name: Comment PR with results
+        if: always() && steps.check.outputs.SKIP != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ env.PR_NUMBER }}
+
+          if [ "${PYTEST_EXIT_CODE:-1}" -eq 0 ]; then
+            STATUS="✅ 测试通过"
+          else
+            STATUS="❌ 测试失败"
+          fi
+
+          # 构建 comment 内容
+          cat > /tmp/pr_comment.md <<EOF
+          ## 🤖 Auto-Test Report
+
+          **状态**: $STATUS
+
+          ### 变更分析
+          $(jq -r '.impact_summary' /tmp/change_manifest.json)
+
+          ### 生成的文件
+          - 前端项目: $(jq -r '.frontend_root' /tmp/change_manifest.json)
+          - 变更文件: $(jq -r '.changed_files | length' /tmp/change_manifest.json) 个
+          - 涉及组件: $(jq -r '.changed_components | length' /tmp/change_manifest.json) 个
+          - 影响路由: $(jq -r '.affected_routes | length' /tmp/change_manifest.json) 条
+
+          ### 测试结果
+          \`\`\`
+          $(tail -20 /tmp/pytest_output.txt)
+          \`\`\`
+
+          ---
+          *此代码由 AI 生成，需人工 review*
+          EOF
+
+          gh pr comment $PR_NUMBER --body-file /tmp/pr_comment.md
+
+      - name: Commit and push generated code
+        if: steps.check.outputs.SKIP != 'true' && env.PYTEST_EXIT_CODE == '0' && env.IS_FORK != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add playwright-automation-test/specs/
+          git add playwright-automation-test/pages/
+          git add playwright-automation-test/tests/
+          git add playwright-automation-test/data/
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "test: auto-generate tests for PR #${{ env.PR_NUMBER }} [skip ci]"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
