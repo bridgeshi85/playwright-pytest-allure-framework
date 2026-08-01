@@ -1,14 +1,18 @@
 import React, { useState } from "react";
-import { Button, Input, Card, message } from "antd";
+import { Button, Input, Card, message, Checkbox } from "antd";
 import { useNavigate } from "react-router-dom";
 
 export default function Login() {
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
 
   const handleLogin = () => {
     if (username === "admin" && password === "123456") {
+      if (rememberMe) {
+        localStorage.setItem("remembered_user", username);
+      }
       message.success("登录成功");
       navigate("/home");
     } else {
@@ -41,6 +45,16 @@ export default function Login() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
+
+        <div style={{ marginTop: 10 }}>
+          <Checkbox
+            data-testid="checkbox-remember"
+            checked={rememberMe}
+            onChange={(e) => setRememberMe(e.target.checked)}
+          >
+            记住我
+          </Checkbox>
+        </div>
 
         <Button
           type="primary"
