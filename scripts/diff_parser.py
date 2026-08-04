@@ -293,9 +293,9 @@ def extract_components_from_file(file_path: str, hunks: list[dict]) -> list[Chan
     for hunk in hunks:
         for op, content in hunk["lines"]:
             if op in ("+", "-"):
-                changed_lines.append(content)
+                changed_lines.append((op, content))
 
-    changed_text = "\n".join(changed_lines)
+    changed_text = "\n".join(content for _, content in changed_lines)
 
     # React/JSX/TSX
     if ext in (".tsx", ".jsx", ".ts", ".js"):

@@ -1,21 +1,19 @@
 name: PR Auto-Test
 
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened]
-    paths:
-      - '**/*.tsx'
-      - '**/*.jsx'
-      - '**/*.vue'
-      - '**/*.ts'
-      - '**/*.js'
-      - '**/*.css'
-      - '**/*.html'
-      - '**/*.svelte'
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: '目标仓库 (owner/repo)。留空则默认当前仓库'
+        required: false
+        type: string
+      pr_number:
+        description: '目标 PR 编号'
+        required: true
+        type: string
 
 concurrency:
-  group: "pr-auto-test-${{ github.event.pull_request.number }}"
+  group: "pr-auto-test-${{ inputs.repo || github.repository }}-${{ inputs.pr_number }}"
   cancel-in-progress: true
 
 permissions:
@@ -29,9 +27,37 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Checkout repository
+      # 跨仓库操作（checkout / gh pr / push）都需要一个有权限访问目标仓库的 PAT，
+      # 默认 GITHUB_TOKEN 只能访问当前仓库，无法读写其他仓库。
+      # 需要在本仓库 Settings → Secrets 中配置 CROSS_REPO_TOKEN（repo 权限的 PAT）。
+      - name: Resolve target repo
+        run: |
+          TARGET_REPO="${{ inputs.repo }}"
+          TARGET_REPO="${TARGET_REPO:-${{ github.repository }}}"
+          echo "TARGET_REPO=$TARGET_REPO" >> $GITHUB_ENV
+          echo "PR_NUMBER=${{ inputs.pr_number }}" >> $GITHUB_ENV
+
+      - name: Get PR metadata
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: |
+          PR_HEAD_REF=$(gh pr view $PR_NUMBER --repo $TARGET_REPO --json headRefName -q '.headRefName')
+          PR_HEAD_REPO=$(gh pr view $PR_NUMBER --repo $TARGET_REPO --json headRepository -q '.headRepository.nameWithOwner' 2>/dev/null || echo "")
+          PR_BASE_REPO=$(gh pr view $PR_NUMBER --repo $TARGET_REPO --json baseRepository -q '.baseRepository.nameWithOwner' 2>/dev/null || echo "")
+
+          echo "PR_HEAD_REF=$PR_HEAD_REF" >> $GITHUB_ENV
+          if [ "$PR_HEAD_REPO" != "$PR_BASE_REPO" ] && [ -n "$PR_HEAD_REPO" ]; then
+            echo "IS_FORK=true" >> $GITHUB_ENV
+          else
+            echo "IS_FORK=false" >> $GITHUB_ENV
+          fi
+
+      - name: Checkout target repository
         uses: actions/checkout@v4
         with:
+          repository: ${{ env.TARGET_REPO }}
+          ref: refs/pull/${{ env.PR_NUMBER }}/head
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
           fetch-depth: 0  # 完整历史，用于 diff
 
       - name: Setup Python
@@ -46,20 +72,9 @@ jobs:
 
       - name: Get PR diff
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          gh pr diff $PR_NUMBER > /tmp/pr.diff
-          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
-
-          # 检测是否来自 fork
-          PR_HEAD_REPO=$(gh pr view $PR_NUMBER --json headRepository -q '.headRepository.nameWithOwner' 2>/dev/null || echo "")
-          PR_BASE_REPO=$(gh pr view $PR_NUMBER --json baseRepository -q '.baseRepository.nameWithOwner' 2>/dev/null || echo "")
-          if [ "$PR_HEAD_REPO" != "$PR_BASE_REPO" ] && [ -n "$PR_HEAD_REPO" ]; then
-            echo "IS_FORK=true" >> $GITHUB_ENV
-          else
-            echo "IS_FORK=false" >> $GITHUB_ENV
-          fi
+          gh pr diff $PR_NUMBER --repo $TARGET_REPO > /tmp/pr.diff
 
       - name: Run diff_parser.py
         run: |
@@ -101,7 +116,7 @@ jobs:
           输出到 playwright-automation-test/specs/ 目录。
           EOF
           )" \
-            --allowedTools "Read,Write,Bash" \
+            --allowedTools "Read,Write,Edit,Bash" \
             --max-turns 15 \
             --output-format json > /tmp/analyzer_output.json
 
@@ -112,7 +127,7 @@ jobs:
         run: |
           cd playwright-automation-test
           claude -p "读取 specs/ 下本次变更的 spec 文件，使用 playwright-test-generator 生成代码" \
-            --allowedTools "Read,Write,Bash" \
+            --allowedTools "Read,Write,Edit,Bash" \
             --max-turns 20 \
             --output-format json > /tmp/generator_output.json
 
@@ -135,10 +150,8 @@ jobs:
       - name: Comment PR with results
         if: always() && steps.check.outputs.SKIP != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         run: |
-          PR_NUMBER=${{ env.PR_NUMBER }}
-
           if [ "${PYTEST_EXIT_CODE:-1}" -eq 0 ]; then
             STATUS="✅ 测试通过"
           else
@@ -169,7 +182,7 @@ jobs:
           *此代码由 AI 生成，需人工 review*
           EOF
 
-          gh pr comment $PR_NUMBER --body-file /tmp/pr_comment.md
+          gh pr comment $PR_NUMBER --repo $TARGET_REPO --body-file /tmp/pr_comment.md
 
       - name: Commit and push generated code
         if: steps.check.outputs.SKIP != 'true' && env.PYTEST_EXIT_CODE == '0' && env.IS_FORK != 'true'
@@ -188,4 +201,4 @@ jobs:
           fi
 
           git commit -m "test: auto-generate tests for PR #${{ env.PR_NUMBER }} [skip ci]"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          git push "https://x-access-token:${{ secrets.CROSS_REPO_TOKEN }}@github.com/${TARGET_REPO}.git" HEAD:${{ env.PR_HEAD_REF }}
