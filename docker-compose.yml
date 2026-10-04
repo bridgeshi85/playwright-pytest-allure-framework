@@ -28,6 +28,20 @@ services:
     restart: unless-stopped
     networks:
       - e2e-test
+
+  har-demo-api:
+    build:
+      context: ./har-demo-api
+      dockerfile: Dockerfile
+    container_name: har-demo-api
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(response => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - e2e-test
   
 volumes:
   jenkins_home:

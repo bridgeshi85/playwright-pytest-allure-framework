@@ -28,6 +28,9 @@ export default function Home() {
           <Button block onClick={() => navigate("/shop")} data-testid="nav-shop">
             🛒 商品列表（API 404）
           </Button>
+          <Button block onClick={() => navigate("/har-demo")} data-testid="nav-har-demo">
+            HAR 录制与回放
+          </Button>
         </Space>
       </Card>
     </div>

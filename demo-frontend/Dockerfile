@@ -19,6 +19,7 @@ FROM nginx:alpine
 
 # 将 Vite 构建后的 dist 内容复制到 Nginx 默认目录
 COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 
