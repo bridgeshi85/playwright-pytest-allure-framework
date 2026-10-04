@@ -1,0 +1,319 @@
+name: E2E Self-Healing (AI Triage)
+
+# ────────────────────────────────────────────────────────────────
+# Flow:
+#   [Trigger] Preview/Staging 部署完成 Webhook
+#     -> Stage 1  基线执行     : pytest 全量 E2E
+#          - 全部 Pass -> 结束
+#          - 存在 Fail -> Stage 2
+#     -> Stage 2  现场清洗     : 提取 Trace / DOM / Logs (Python 脚本)
+#     -> Stage 3  AI 诊断与自愈 : claude headless CLI 运行
+#                                 triaging-e2e-failures skill
+#          - 低置信度 / real_bug      -> 跳至 Stage 5
+#          - 高置信度(>=0.7) 脚本过期 -> 自动修复 (AST/Regex)
+#     -> Stage 4  闭环验证     : pytest --lf 重跑被修改的失败用例
+#     -> Stage 5  汇总播报     : 生成 Markdown 报告 (always)
+# ────────────────────────────────────────────────────────────────
+
+on:
+  # GitHub 原生"部署状态"事件 = Preview/Staging 环境部署完成 Webhook
+  deployment_status:
+  # 手动触发，便于本地联调/演示
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "目标环境"
+        required: false
+        default: "staging"
+        type: choice
+        options:
+          - preview
+          - staging
+      auto_fix:
+        description: "允许 AI 自动修复高置信度问题"
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: "e2e-self-healing-${{ github.ref }}"
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  WORKDIR: playwright-automation-test
+  TARGET_ENV: ${{ github.event.inputs.environment || 'staging' }}
+
+jobs:
+  self-heal:
+    # 仅在部署成功时响应 deployment_status；手动触发不受限制
+    if: >-
+      github.event_name != 'deployment_status' ||
+      github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------- Python test environment ----------
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: ${{ env.WORKDIR }}/requirements.txt
+
+      - name: Install Python dependencies
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: python -m playwright install --with-deps chromium
+
+      # ---------- Node / demo-frontend (system under test) ----------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: demo-frontend/package-lock.json
+
+      - name: Install demo-frontend dependencies
+        working-directory: demo-frontend
+        run: npm ci
+
+      - name: Build demo-frontend
+        working-directory: demo-frontend
+        run: npm run build
+
+      - name: Serve demo-frontend on port 5173
+        working-directory: demo-frontend
+        run: |
+          npx serve dist -l 5173 --no-request-logging &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5173 && break || sleep 1
+          done
+
+      - name: Enable headless mode for CI
+        run: |
+          sed -i 's/headless: false/headless: true/' \
+            ${{ env.WORKDIR }}/configs/env.default.yaml
+
+      # ────────────────────────────────────────────────────────
+      # Stage 1: 基线执行 — 运行全量 E2E 测试集
+      # ────────────────────────────────────────────────────────
+      - name: "Stage 1: Run baseline E2E suite"
+        id: baseline
+        working-directory: ${{ env.WORKDIR }}
+        continue-on-error: true
+        run: pytest tests/test_failures_showcase.py --tb=short
+
+      - name: "Stage 1: Record baseline outcome"
+        id: baseline_status
+        run: echo "failed=${{ steps.baseline.outcome == 'failure' }}" >> "$GITHUB_OUTPUT"
+
+      # ────────────────────────────────────────────────────────
+      # Stage 2: 现场清洗 — 提取 Trace / DOM / Logs
+      # ────────────────────────────────────────────────────────
+      - name: "Stage 2: Extract trace / DOM / log evidence"
+        if: steps.baseline_status.outputs.failed == 'true'
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          set -e
+          EVIDENCE_DIR="output/triage"
+          mkdir -p "$EVIDENCE_DIR"
+
+          LATEST_TRACE_DIR=$(find output/traces -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1 || true)
+          LATEST_SHOT_DIR=$(find output/screenshots -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1 || true)
+
+          echo "Latest trace dir: ${LATEST_TRACE_DIR:-none}"
+          echo "Latest screenshot dir: ${LATEST_SHOT_DIR:-none}"
+
+          if [ -n "$LATEST_TRACE_DIR" ]; then
+            for trace in "$LATEST_TRACE_DIR"/*.zip; do
+              [ -e "$trace" ] || continue
+              name=$(basename "$trace" .zip)
+              echo "Parsing trace: $name"
+              python .claude/skills/triaging-e2e-failures/scripts/parse_trace.py \
+                "$trace" --json --out "$EVIDENCE_DIR/${name}.trace.json" || true
+            done
+          fi
+
+          if [ -n "$LATEST_SHOT_DIR" ]; then
+            for html in "$LATEST_SHOT_DIR"/*.html; do
+              [ -e "$html" ] || continue
+              name=$(basename "$html" .html)
+              echo "Extracting DOM: $name"
+              python .claude/skills/triaging-e2e-failures/scripts/extract_dom.py \
+                "$html" --out "$EVIDENCE_DIR/${name}.dom.html" || true
+            done
+          fi
+
+          if [ -f output/logs/test.log ]; then
+            cp output/logs/test.log "$EVIDENCE_DIR/test.log"
+          fi
+
+          echo "Evidence collected:"
+          ls -la "$EVIDENCE_DIR"
+
+      # ────────────────────────────────────────────────────────
+      # Stage 3: AI 诊断与自愈 — claude headless CLI + triaging-e2e-failures skill
+      # ────────────────────────────────────────────────────────
+      - name: "Stage 3: Install Claude Code CLI"
+        if: steps.baseline_status.outputs.failed == 'true'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: "Stage 3: AI diagnosis & self-heal"
+        if: steps.baseline_status.outputs.failed == 'true'
+        id: ai_triage
+        working-directory: ${{ env.WORKDIR }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ALLOW_AUTO_FIX: ${{ github.event.inputs.auto_fix || 'true' }}
+        run: |
+          set -e
+          PROMPT=$(cat <<'EOF'
+          请使用本仓库的 triaging-e2e-failures Skill 分析本次 pytest 运行的失败用例。
+
+          上下文：
+          - 这是无人值守的 CI headless 会话（部署完成 Webhook 触发的自愈流水线），不能等待用户确认。
+          - 失败证据位于 output/logs/test.log、output/traces/<最新目录>/、output/screenshots/<最新目录>/，
+            以及 Stage 2 预先提取的 output/triage/ 目录（trace JSON + 清洗后的 DOM）。
+          - 严格按照 references/triage_rules.md 判断 category / sub_category / confidence。
+
+          自愈规则（覆盖 skill 中"询问用户"的交互步骤，因为当前是无人值守环境）：
+          - 若 confidence >= 0.7 且分类表明是"脚本过期"（如 flaky_test/selector_renamed、
+            flaky_test/element_missing 等可通过修改测试代码/Page Object 修复的情况），
+            且环境变量 ALLOW_AUTO_FIX=true：直接按 references/fix_patterns.md 使用最小化的
+            Python AST/正则替换修复对应文件（不要做范围外重构），并在报告中记录修改的文件和行号。
+          - 若 confidence < 0.7，或分类为 real_bug（真实缺陷），或 ALLOW_AUTO_FIX=false：
+            不修改任何代码，只在报告中给出诊断结论和建议，跳过自动修复。
+
+          输出要求：
+          - 按 assets/report_template.md 生成完整 Markdown 报告，保存为当前工作目录
+            （playwright-automation-test/）下的 e2e-failure-triage-report-<YYYY-MM-DD>.md
+            （若已存在同名文件追加序号后缀）。
+          - 在报告开头新增一行 `APPLIED_FIX: true|false`，标明本次是否修改了代码。
+          EOF
+          )
+
+          claude -p "$PROMPT" \
+            --allowedTools "Read,Write,Edit,Bash,Glob,Grep" \
+            --permission-mode acceptEdits \
+            --output-format text
+
+          REPORT_FILE=$(ls -t e2e-failure-triage-report-*.md 2>/dev/null | head -n 1 || true)
+          if [ -n "$REPORT_FILE" ]; then
+            echo "report_file=$REPORT_FILE" >> "$GITHUB_OUTPUT"
+            if grep -q "APPLIED_FIX: true" "$REPORT_FILE"; then
+              echo "applied_fix=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "applied_fix=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "applied_fix=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ────────────────────────────────────────────────────────
+      # Stage 4: 闭环验证 — 重新运行被修改的失败用例
+      # ────────────────────────────────────────────────────────
+      - name: "Stage 4: Re-run previously failed tests (closed-loop validation)"
+        if: steps.baseline_status.outputs.failed == 'true'
+        id: retest
+        working-directory: ${{ env.WORKDIR }}
+        continue-on-error: true
+        run: pytest --lf --tb=short
+
+      - name: "Stage 4: Record validation outcome"
+        if: steps.baseline_status.outputs.failed == 'true'
+        id: retest_status
+        run: echo "passed=${{ steps.retest.outcome == 'success' }}" >> "$GITHUB_OUTPUT"
+
+      # If the AI applied a fix and the closed-loop re-run now passes,
+      # open a PR with the fix instead of leaving changes uncommitted on main.
+      - name: "Stage 4: Open PR with self-healed fix"
+        if: >-
+          steps.baseline_status.outputs.failed == 'true' &&
+          steps.ai_triage.outputs.applied_fix == 'true' &&
+          steps.retest_status.outputs.passed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "fix: auto-heal flaky E2E selector(s) via AI triage"
+          branch: "auto/e2e-self-heal-${{ github.run_id }}"
+          title: "fix(e2e): AI self-healed flaky test(s) [run ${{ github.run_id }}]"
+          body: |
+            Automatically generated by the **E2E Self-Healing** workflow.
+
+            - Triggered by: `${{ github.event_name }}` (target env: `${{ env.TARGET_ENV }}`)
+            - Triage confidence >= 0.7, classified as outdated selector/script
+            - Closed-loop validation (`pytest --lf`) passed after the fix
+
+            See the attached triage report artifact for full reasoning and evidence.
+          labels: |
+            e2e-self-heal
+            automated
+
+      # ────────────────────────────────────────────────────────
+      # Stage 5: 汇总播报 — 生成 Markdown 报告 (always runs)
+      # ────────────────────────────────────────────────────────
+      - name: "Stage 5: Build summary report"
+        if: always()
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          {
+            echo "# E2E Self-Healing Run Summary"
+            echo
+            echo "- Trigger: \`${{ github.event_name }}\` (target env: \`${{ env.TARGET_ENV }}\`)"
+            echo "- Stage 1 baseline: ${{ steps.baseline.outcome == 'success' && '✅ all passed' || '❌ failures detected' }}"
+            if [ "${{ steps.baseline_status.outputs.failed }}" = "true" ]; then
+              echo "- Stage 3 AI fix applied: \`${{ steps.ai_triage.outputs.applied_fix || 'n/a' }}\`"
+              echo "- Stage 4 closed-loop validation: \`${{ steps.retest.outcome || 'n/a' }}\`"
+            else
+              echo "- Stage 2-4: skipped (no failures)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          REPORT_FILE="${{ steps.ai_triage.outputs.report_file }}"
+          if [ -n "$REPORT_FILE" ] && [ -f "$REPORT_FILE" ]; then
+            echo >> "$GITHUB_STEP_SUMMARY"
+            cat "$REPORT_FILE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: "Stage 5: Upload triage report artifact"
+        if: always() && steps.baseline_status.outputs.failed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-triage-report
+          path: |
+            ${{ env.WORKDIR }}/e2e-failure-triage-report-*.md
+            ${{ env.WORKDIR }}/output/triage
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload Allure results & raw evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-and-evidence
+          path: |
+            ${{ env.WORKDIR }}/output/reports/allure-results
+            ${{ env.WORKDIR }}/output/logs
+            ${{ env.WORKDIR }}/output/traces
+            ${{ env.WORKDIR }}/output/screenshots
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Fail job if baseline failed and self-heal did not resolve it
+        if: >-
+          steps.baseline_status.outputs.failed == 'true' &&
+          steps.retest_status.outputs.passed != 'true'
+        run: |
+          echo "::error::E2E failures remain after self-healing attempt. See triage report for details."
+          exit 1
