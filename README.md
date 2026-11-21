@@ -65,9 +65,10 @@ This project provides a complete test automation solution with:
    docker-compose up -d
    ```
 
-   This will start:
-   - Jenkins server on `http://localhost:8080`
-   - Demo frontend on `http://localhost:3000`
+    This will start:
+    - Jenkins server on `http://localhost:8080`
+    - Demo frontend on `http://localhost:3000`
+    - HAR demo API on the internal `e2e-test` network
 
 3. **Access the services:**
    - Frontend: http://localhost:3000
@@ -78,12 +79,41 @@ This project provides a complete test automation solution with:
 #### Setup Demo Frontend
 
 ```bash
-cd demo-frontend
+cd har-demo-api
+npm install
+npm start
+
+cd ../demo-frontend
 npm install
 npm run dev
 ```
 
-The frontend will be available at http://localhost:3000
+The HAR demo page is available at `http://localhost:3000/har-demo`. Its three
+API calls use the Vite proxy, so the browser always requests same-origin URLs.
+
+#### Record and Replay the HAR Demo
+
+With both local services running, record the reviewed static API snapshot:
+
+```bash
+cd playwright-automation-test
+venv/bin/python -m pytest tests/test_har_demo.py -m har_recording
+```
+
+The generated `data/har/har_demo.har` embeds only deterministic sample API
+responses. Review changes to this file and refresh it intentionally after API
+response-schema changes.
+
+Stop `har-demo-api` while leaving the frontend running, then prove replay works
+without a live API:
+
+```bash
+cd playwright-automation-test
+venv/bin/python -m pytest tests/test_har_demo.py
+```
+
+The replay route intercepts only `/api/har-demo/**`; frontend assets still load
+from the local frontend server.
 
 #### Setup Test Framework
 

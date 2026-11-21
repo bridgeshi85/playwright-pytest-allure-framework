@@ -4,6 +4,7 @@ from utils.config_loader import load_config
 # Import fixtures to ensure they are registered
 from fixtures.report_fixture import save_screenshot, test_directory
 from fixtures.browser_fixture import *
+from fixtures.har_fixture import har_recording_context, har_replay_context
 
 logger = logging.getLogger(__name__)
 
