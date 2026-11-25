@@ -33,24 +33,45 @@ export default function HarDemo() {
 
   if (error) {
     return (
-      <Alert
-        data-testid="har-demo-error"
-        description={error}
-        message="HAR demo failed to load"
-        type="error"
-      />
+      <div style={pageStyle}>
+        <Alert
+          data-testid="har-demo-error"
+          description={error}
+          message="HAR demo failed to load"
+          type="error"
+        />
+      </div>
     );
   }
 
   if (!data) {
-    return <Spin data-testid="har-demo-loading" tip="Loading HAR demo data" />;
+    return (
+      <div style={pageStyle}>
+        <Spin data-testid="har-demo-loading" tip="Loading HAR demo data" />
+      </div>
+    );
   }
 
   return (
-    <Card data-testid="har-demo-success" title="HAR Record and Replay Demo">
-      <p data-testid="har-demo-profile">{data.profile.displayName}</p>
-      <p data-testid="har-demo-permission">{data.permissions.primaryPermission}</p>
-      <p data-testid="har-demo-metrics">{data.metrics.activeProjects}</p>
-    </Card>
+    <div style={pageStyle}>
+      <Card
+        data-testid="har-demo-success"
+        title="HAR Record and Replay Demo"
+        style={{ width: 420 }}
+      >
+        <p data-testid="har-demo-profile">{data.profile.displayName}</p>
+        <p data-testid="har-demo-permission">{data.permissions.primaryPermission}</p>
+        <p data-testid="har-demo-metrics">{data.metrics.activeProjects}</p>
+      </Card>
+    </div>
   );
 }
+
+const pageStyle = {
+  alignItems: "center",
+  backgroundColor: "#f5f5f5",
+  display: "flex",
+  justifyContent: "center",
+  height: "100vh",
+  width: "100vw",
+};
