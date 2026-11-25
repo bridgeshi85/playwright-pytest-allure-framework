@@ -9,22 +9,32 @@ on:
   schedule: daily
   workflow_dispatch:
 
+engine:
+  id: codex
+  model: auto
+  env:
+    OPENAI_BASE_URL: https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+
 permissions:
   contents: read
   issues: read
   pull-requests: read
 
   copilot-requests: none
-network: defaults
+
+network:
+  allowed:
+    - defaults
+    - token-plan.cn-beijing.maas.aliyuncs.com
 
 tools:
-  bash: ["cat", "ls", "find", "grep", "head", "tail", "wc"]
+  bash: ["*"]
+  edit: false
   github:
-    # If in a public repo, setting `lockdown: false` allows
-    # reading issues, pull requests and comments from 3rd-parties
-    # If in a private repo this has no particular effect.
     lockdown: false
-    min-integrity: none # This workflow is allowed to examine and comment on any issues
+    min-integrity: none
 
 safe-outputs:
   mentions: false
@@ -33,8 +43,7 @@ safe-outputs:
     title-prefix: "[repo-status] "
     labels: [report, daily-status]
     close-older-issues: true
-source: githubnext/agentics/workflows/repo-status.md@139fa09ef17cde4135e696ff8e7af09bc5ddfa6e
-source-sha: "139fa09ef17cde4135e696ff8e7af09bc5ddfa6e"
+
 ---
 
 # Repo Status
