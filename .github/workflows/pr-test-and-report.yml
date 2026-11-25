@@ -76,9 +76,23 @@ jobs:
 
       # ---------- Run Playwright tests ----------
       - name: Run Playwright tests
+        id: playwright
         working-directory: playwright-automation-test
         run: |
-          pytest tests/test_login.py --env=default --tb=short
+          mkdir -p output
+          pytest tests/test_login.py --env=default --tb=short --junitxml=output/triage-junit.xml
+
+      - name: Upload E2E failure evidence
+        if: failure() && steps.playwright.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-triage-${{ github.run_attempt }}
+          path: |
+            playwright-automation-test/output/triage-junit.xml
+            playwright-automation-test/output/logs/test.log
+            playwright-automation-test/output/screenshots/**/*.html
+          retention-days: 7
+          if-no-files-found: ignore
 
       # ---------- Upload Allure JSON results (always, even on test failure) ----------
       - name: Upload Allure results artifact

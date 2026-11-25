@@ -12,6 +12,21 @@ description: Diagnose Playwright and pytest E2E failures using traces, DOM snaps
 
 ## 输入数据目录
 
+### CI 模式
+
+当调用方指定 CI 模式时，只分析它提供的当前 run/attempt 证据。先从 JUnit 的
+`failure` / `error` 获取失败用例、异常及实际值与预期值，再用日志、DOM 或
+trace（如有）交叉验证。使用 `references/triage_rules.md` 保留原始分类，并映射 CI 分类：
+
+- `real_bug`：证据明确表明产品行为违反预期契约。
+- `flaky`：有同一测试或依赖从瞬态故障中恢复的证据。
+- `environment`：有运行环境、配置或依赖异常的证据。
+- `unknown`：证据不足，或根因是稳定的测试脚本问题。
+
+单个超时、HTTP 状态码或置信度分数不足以证明瞬态故障或产品回归。输出每个
+失败用例的 ID、原始分类、CI 分类、证据位置及理由。发布方式由调用方定义。
+CI 模式跳过下面的历史目录扫描、本地报告保存及自动修复步骤。
+
 测试运行后，失败证据自动保存在以下三个目录（路径均相对于 `playwright-automation-test/`）：
 
 | 目录 | 内容 | 说明 |
