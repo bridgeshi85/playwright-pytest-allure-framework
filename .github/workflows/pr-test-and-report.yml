@@ -60,13 +60,14 @@ jobs:
         working-directory: demo-frontend
         run: npm run build
 
-      - name: Serve demo-frontend on port 5173
+      - name: Serve demo-frontend on the test environment port
         working-directory: demo-frontend
         run: |
-          npx serve dist -l 5173 --no-request-logging &
+          npx serve dist -l 3000 --no-request-logging &
           for i in $(seq 1 30); do
-            curl -sf http://localhost:5173 && break || sleep 1
+            curl -fsS http://127.0.0.1:3000 >/dev/null && exit 0 || sleep 1
           done
+          exit 1
 
       # ---------- Override headless mode for CI ----------
       - name: Enable headless mode for CI
